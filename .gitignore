@@ -1,0 +1,11 @@
+.gitignore
+node_modules
+build
+dist
+target
+.DS_Store
+src/native/build
+.coverage
+.cov
+.env*
+.idea

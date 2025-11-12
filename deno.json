@@ -1,0 +1,24 @@
+{
+  "name": "@nick/terminfo",
+  "version": "0.1.0",
+  "license": "MIT",
+  "author": {
+    "name": "Nicholas Berlette",
+    "email": "nick@berlette.com",
+    "url": "https://github.com/nberlette"
+  },
+  "exports": {
+    ".": "./src/terminfo.ts",
+    "./types": "./src/types.ts",
+    "./terminfo": "./src/native/terminfo.node",
+    "./terminfo.node": "./src/native/terminfo.node"
+  },
+  "tasks": {
+    "build": "./scripts/build.sh",
+    "fmt": "deno fmt",
+    "fmt:check": "deno fmt --check",
+    "lint": "deno lint",
+    "lint:fix": "deno lint --fix",
+    "test": "deno test -Aq --parallel --no-check=remote --coverage=.coverage --doc --coverage-raw-data-only"
+  }
+}
