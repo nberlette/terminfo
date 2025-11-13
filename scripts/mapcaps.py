@@ -31,6 +31,24 @@ FORMAT_LABELS = {
   "s": "string",
 }
 
+CONTROL_PATTERN = re.compile(r"^\^(.)$")
+KEY_BASES = {
+  "home": "home",
+  "end": "end",
+  "left": "left",
+  "right": "right",
+  "up": "up",
+  "down": "down",
+  "ic": "insert",
+  "dc": "delete",
+  "enter": "enter",
+  "backspace": "backspace",
+  "next": "next",
+  "previous": "previous",
+  "npage": "page_down",
+  "ppage": "page_up",
+}
+
 @dataclass
 class CapabilityEntry:
   name: str
@@ -273,6 +291,45 @@ def describe_string_parameters(value: Optional[str]) -> Optional[List[Dict[str, 
   params = analyze_string_parameters(value)
   return params or None
 
+def describe_key_binding(_termcap: str, human: Optional[str]) -> Optional[Dict[str, object]]:
+  if not human or not human.startswith("key_"):
+    return None
+  body = human[4:]
+  lowered = body.lower()
+  modifiers: List[str] = []
+  base: Optional[str] = None
+  if lowered.startswith("s") and lowered[1:] in KEY_BASES:
+    base = KEY_BASES[lowered[1:]]
+    modifiers.append("shift")
+  elif lowered in KEY_BASES:
+    base = KEY_BASES[lowered]
+  else:
+    return None
+  payload: Dict[str, object] = {"base": base}
+  if modifiers:
+    payload["modifiers"] = modifiers
+  return payload
+
+def describe_control_character(value: Optional[str]) -> Optional[Dict[str, object]]:
+  if not value:
+    return None
+  match = CONTROL_PATTERN.fullmatch(value)
+  if not match:
+    return None
+  symbol = match.group(1)
+  if symbol == "?":
+    codepoint = 0x7F
+  else:
+    codepoint = ord(symbol) & 0x1F
+  char = chr(codepoint)
+  return {
+    "codepoint": codepoint,
+    "hex": f"0x{codepoint:02X}",
+    "escape": f"\\x{codepoint:02X}",
+    "char": char,
+    "caret": value,
+  }
+
 def parse_capability_listing(term: str, flag: str) -> Dict[str, List[str]]:
   text = run_infocmp(term, [flag, "-1"])
   sections = {"boolean": [], "number": [], "string": []}
@@ -367,6 +424,12 @@ def build_mapping(term: str) -> Dict[str, Dict[str, object]]:
         params = describe_string_parameters(entry.value)
         if params:
           payload["parameters"] = params
+        control = describe_control_character(value if isinstance(value, str) else None)
+        if control:
+          payload["control"] = control
+      key_info = describe_key_binding(code, human or None)
+      if key_info:
+        payload["key"] = key_info
       mapping[code] = payload
 
   hydrate("boolean")
