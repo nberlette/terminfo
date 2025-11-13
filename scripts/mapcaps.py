@@ -12,7 +12,7 @@ from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 __version__ = "1.1.0"
 
-FORMAT_COMMANDS = {"d", "o", "x", "X", "c", "s"}
+FORMAT_COMMANDS = {"d", "o", "x", "X", "c", "s", "["}
 FORMAT_FLAG_CHARS = set(" #+-'.0123456789")
 FORMAT_KIND_MAP = {
   "d": "number",
@@ -21,6 +21,7 @@ FORMAT_KIND_MAP = {
   "X": "number",
   "c": "char",
   "s": "string",
+  "[": "string",
 }
 FORMAT_LABELS = {
   "d": "decimal",
@@ -29,6 +30,7 @@ FORMAT_LABELS = {
   "X": "HEX",
   "c": "char",
   "s": "string",
+  "[": "char_set",
 }
 
 CONTROL_PATTERN = re.compile(r"^\^(.)$")
@@ -256,6 +258,20 @@ def analyze_string_parameters(value: str) -> List[Dict[str, object]]:
     if cmd == "r":
       if len(stack) >= 2:
         stack[-1], stack[-2] = stack[-2], stack[-1]
+      continue
+    if cmd == "[":
+      depth = 1
+      while i < length and depth > 0:
+        ch = value[i]
+        if ch == "\\" and i + 1 < length:
+          i += 2
+          continue
+        i += 1
+        if ch == "[":
+          depth += 1
+        elif ch == "]":
+          depth -= 1
+      note_parameter_usage(usage, pop_value(stack, implicit_operand), "[")
       continue
     if cmd in FORMAT_COMMANDS:
       note_parameter_usage(usage, pop_value(stack, implicit_operand), cmd)
