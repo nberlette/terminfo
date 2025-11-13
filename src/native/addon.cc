@@ -65,8 +65,8 @@ extern "C" {
   const char* enable_mouse();
   const char* disable_mouse();
 
-  const char* enable_keyboard_action_mode();
-  const char* disable_keyboard_action_mode();
+  const char* enable_keyboard();
+  const char* disable_keyboard();
 
   const char* cursor_hide();
   const char* cursor_show();
@@ -80,6 +80,9 @@ extern "C" {
   const char* ech(int n);
   const char* dch(int n);
   const char* ich(int n);
+  const char* dl(int n);
+  const char* il(int n);
+  const char* el(int n);
 
   const char* hpa(int col);
   const char* hpr(int col);
@@ -365,15 +368,6 @@ static napi_value fn_name(napi_env env, napi_callback_info info) { \
   return make_##ret_t(env, c_fn(p1, p2));                          \
 }
 
-#define FZ2(fn_name, c_fn, p1, p1_t, p1_d, p2, p2_t, p2_d, ret_t)  \
-static napi_value fn_name(napi_env env, napi_callback_info info) { \
-  napi_value argv[2]; size_t argc = 2;                             \
-  load_args(env, info, 2, &argc, argv);                            \
-  p1_t p1 = argc > 0 ? get_##p1_t(env, argv[0]) : p1_d;            \
-  p2_t p2 = argc > 1 ? get_##p2_t(env, argv[1]) : p2_d;            \
-  return make_##ret_t(env, c_fn(p1, p2) != 0);                     \
-}
-
 // ----------------------------------
 // Bindings
 // ----------------------------------
@@ -425,32 +419,9 @@ static napi_value fn_info(napi_env env, napi_callback_info info) {
   return o;
 }
 
-static napi_value fn_tigetnum(napi_env env, napi_callback_info info) {
-  napi_value argv[1]; size_t argc = 1;
-  load_args(env, info, 1, &argc, argv);
-  if (argc < 1) return make_int(env, -1);
-  char cap[128];
-  get_str(env, argv[0], cap, sizeof(cap));
-  return make_int(env, get_tigetnum(cap));
-}
-
-static napi_value fn_tigetflag(napi_env env, napi_callback_info info) {
-  napi_value argv[1]; size_t argc = 1;
-  load_args(env, info, 1, &argc, argv);
-  if (argc < 1) return make_int(env, -1);
-  char cap[128];
-  get_str(env, argv[0], cap, sizeof(cap));
-  return make_int(env, get_tigetflag(cap));
-}
-
-static napi_value fn_tigetstr(napi_env env, napi_callback_info info) {
-  napi_value argv[1]; size_t argc = 1;
-  load_args(env, info, 1, &argc, argv);
-  if (argc < 1) return make_str(env, "");
-  char cap[128];
-  get_str(env, argv[0], cap, sizeof(cap));
-  return make_str(env, get_tigetstr(cap));
-}
+FS1(fn_tigetstr, get_tigetstr, cap, "", 128, str);
+FS1(fn_tigetnum, get_tigetnum, cap, "", 128, int);
+FS1(fn_tigetflag, get_tigetflag, cap, "", 128, int);
 
 static napi_value fn_tparm(napi_env env, napi_callback_info info) {
   napi_value argv[10]; size_t argc = 10;
@@ -475,15 +446,8 @@ static napi_value fn_sgr(napi_env env, napi_callback_info info) {
   return make_str(env, render_sgr(bold, underline, blink, reverse, fg, bg));
 }
 
-static napi_value fn_box_char(napi_env env, napi_callback_info info) {
-  napi_value argv[2]; size_t argc = 2;
-  load_args(env, info, 2, &argc, argv);
-  int style = argc > 0 ? get_int(env, argv[0]) : 0;
-  int part  = argc > 1 ? get_int(env, argv[1]) : 0;
-  return make_str(env, get_boxchar(style, part));
-}
+FN2(fn_box_char, get_boxchar, style, int, 0, part, int, 0, str);
 
-// Use curses directly to avoid relying on a custom C shim that your compiler denies exists.
 static inline int color_rgb_bridge(short i, short* r, short* g, short* b) {
   return color_content(i, r, g, b); // OK (0) or ERR (-1)
 }
@@ -496,120 +460,111 @@ static napi_value fn_color_rgb(napi_env env, napi_callback_info info) {
   int rc = color_rgb_bridge(idx, &r, &g, &b);
 
   napi_value o = make_obj(env);
-  set_prop(env, o, "ok", make_bool(env, rc == 0));
+  set_prop(env, o, "ok", make_bool(env, rc >= 0));
   set_prop(env, o, "r", make_int(env, (int)r));
   set_prop(env, o, "g", make_int(env, (int)g));
   set_prop(env, o, "b", make_int(env, (int)b));
   return o;
 }
 
-static napi_value fn_cap(napi_env env, napi_callback_info info) {
-  napi_value argv[1]; size_t argc = 1;
-  load_args(env, info, 1, &argc, argv);
-  if (argc < 1) return make_str(env, "");
-  char what[64]; get_str(env, argv[0], what, sizeof(what));
-  if (strcmp(what, "smcup") == 0)         return make_str(env, enter_alt_screen());
-  if (strcmp(what, "rmcup") == 0)         return make_str(env, exit_alt_screen());
-  if (strcmp(what, "civis") == 0)         return make_str(env, cursor_hide());
-  if (strcmp(what, "cnorm") == 0)         return make_str(env, cursor_show());
-  if (strcmp(what, "sc") == 0)            return make_str(env, cursor_save());
-  if (strcmp(what, "rc") == 0)            return make_str(env, cursor_restore());
-  if (strcmp(what, "clear") == 0)         return make_str(env, erase_screen());
-  if (strcmp(what, "home") == 0)          return make_str(env, home());
-  if (strcmp(what, "cursor_home") == 0)   return make_str(env, home());
-  if (strcmp(what, "enable_mouse") == 0)  return make_str(env, enable_mouse());
-  if (strcmp(what, "disable_mouse") == 0) return make_str(env, disable_mouse());
-  if (strcmp(what, "smkx") == 0)          return make_str(env, enable_keyboard_action_mode());
-  if (strcmp(what, "rmkx") == 0)          return make_str(env, disable_keyboard_action_mode());
-  if (strcmp(what, "cup") == 0)           return make_str(env, cup(0, 0));
+FS1(fn_cap, get_tigetstr, cap, "", 128,                   str);
+FN0(fn_ed,  erase_screen,                                 str);
+FN1(fn_el,            el,    n,  int, 1,                  str);
+FN1(fn_dl,            dl,    n,  int, 1,                  str);
+FN1(fn_il,            il,    n,  int, 1,                  str);
+FN1(fn_ech,          ech,    n,  int, 1,                  str);
+FN1(fn_dch,          dch,    n,  int, 1,                  str);
+FN1(fn_ich,          ich,    n,  int, 1,                  str);
+FN2(fn_cup,          cup,    r,  int, 0,    c, int, 0,    str);
+FN1(fn_cuu,          cuu,    n,  int, 1,                  str);
+FN1(fn_cud,          cud,    n,  int, 1,                  str);
+FN1(fn_cuf,          cuf,    n,  int, 1,                  str);
+FN1(fn_cub,          cub,    n,  int, 1,                  str);
+FN1(fn_hpa,          hpa,  col,  int, 1,                  str);
+FN1(fn_hpr,          hpr,  col,  int, 1,                  str);
+FN1(fn_vpa,          vpa,  row,  int, 1,                  str);
+FN1(fn_vpr,          vpr,  row,  int, 1,                  str);
+FN0(fn_cuu1,        cuu1,                                 str);
+FN0(fn_cud1,        cud1,                                 str);
+FN0(fn_cuf1,        cuf1,                                 str);
+FN0(fn_cub1,        cub1,                                 str);
+FN0(fn_home,        home,                                 str);
 
-  return make_str(env, get_tigetstr(what));
-}
+FN0(fn_cursor_home,           home,                       str);
+FN0(fn_cursor_hide,           cursor_hide,                str);
+FN0(fn_cursor_show,           cursor_show,                str);
+FN0(fn_cursor_save,           cursor_save,                str);
+FN0(fn_cursor_restore,        cursor_restore,             str);
 
-FN0(fn_ed, erase_screen,                                 str);
-FN1(fn_el,  erase_lines,    n,  int, 1,                  str);
-FN1(fn_ech,         ech,    n,  int, 1,                  str);
-FN1(fn_dch,         dch,    n,  int, 1,                  str);
-FN1(fn_ich,         ich,    n,  int, 1,                  str);
-FN2(fn_cup,         cup,    r,  int, 0,    c, int, 0,    str);
-FN1(fn_cuu,         cuu,    n,  int, 1,                  str);
-FN1(fn_cud,         cud,    n,  int, 1,                  str);
-FN1(fn_cuf,         cuf,    n,  int, 1,                  str);
-FN1(fn_cub,         cub,    n,  int, 1,                  str);
-FN1(fn_hpa,         hpa,  col,  int, 1,                  str);
-FN1(fn_hpr,         hpr,  col,  int, 1,                  str);
-FN1(fn_vpa,         vpa,  row,  int, 1,                  str);
-FN1(fn_vpr,         vpr,  row,  int, 1,                  str);
-FN0(fn_cuu1,       cuu1,                                 str);
-FN0(fn_cud1,       cud1,                                 str);
-FN0(fn_cuf1,       cuf1,                                 str);
-FN0(fn_cub1,       cub1,                                 str);
-FN0(fn_home,       home,                                 str);
+FN0(fn_exit_alt_screen,       exit_alt_screen,            str);
+FN0(fn_enter_alt_screen,      enter_alt_screen,           str);
+FN0(fn_enable_mouse,          enable_mouse,               str);
+FN0(fn_disable_mouse,         disable_mouse,              str);
+FN0(fn_erase_screen,          erase_screen,               str);
+FN0(fn_erase_line,            erase_line,                 str);
+FN1(fn_erase_lines,           erase_lines, n, int, 1,     str);
+FN0(fn_get_mouse_x,           get_mouse_x,                int);
+FN0(fn_get_mouse_y,           get_mouse_y,                int);
+FN0(fn_get_mouse_button,      get_mouse_button,           int);
+FN0(fn_get_mouse_action,      get_mouse_action,           int);
+FN0(fn_get_mouse_modifiers,   get_mouse_modifiers,        int);
 
-FN0(fn_cursor_home,        home,                         str);
-FN0(fn_cursor_hide,        cursor_hide,                  str);
-FN0(fn_cursor_show,        cursor_show,                  str);
-FN0(fn_cursor_save,        cursor_save,                  str);
-FN0(fn_cursor_restore,     cursor_restore,               str);
+FN2(fn_request_mode_status,   request_mode_status,        mode, int, 0,  dec, int, 0, int);
+FN2(fn_is_mode_supported,     is_mode_supported,          mode, int, 0,  dec, int, 0, int);
+FN2(fn_is_mode_settable,      is_mode_settable,           mode, int, 0,  dec, int, 0, int);
+FN2(fn_is_mode_enabled,       is_mode_enabled,            mode, int, 0,  dec, int, 0, int);
+FN2(fn_is_mode_disabled,      is_mode_disabled,           mode, int, 0,  dec, int, 0, int);
+FN2(fn_is_mode_permanent,     is_mode_permanent,          mode, int, 0,  dec, int, 0, int);
 
-FN0(fn_exit_alt_screen,      exit_alt_screen,            str);
-FN0(fn_enter_alt_screen,     enter_alt_screen,           str);
-FN0(fn_has_alt_screen,       has_alt_screen,             bool);
-FN0(fn_has_colors,           has_colors_support,         bool);
-FN0(fn_get_num_pairs,        get_num_pairs,              int);
-FN0(fn_get_num_colors,       get_num_colors,             int);
-FN0(fn_can_change_color,     can_change_color_support,   bool);
-FN0(fn_enable_mouse,         enable_mouse,               str);
-FN0(fn_disable_mouse,        disable_mouse,              str);
-FN0(fn_erase_screen,         erase_screen,               str);
-FN0(fn_erase_line,           erase_line,                 str);
-FN1(fn_erase_lines,          erase_lines, n, int, 1,     str);
-FN0(fn_get_mouse_x,          get_mouse_x,                int);
-FN0(fn_get_mouse_y,          get_mouse_y,                int);
-FN0(fn_get_mouse_button,     get_mouse_button,           int);
-FN0(fn_get_mouse_action,     get_mouse_action,           int);
-FN0(fn_get_mouse_modifiers,  get_mouse_modifiers,        int);
-FN0(fn_has_mouse_support,    has_mouse_support,          bool);
-FN0(fn_has_bracketed_paste,  has_bracketed_paste,        bool);
-FN0(fn_has_focus_events,     has_focus_events,           bool);
-FN0(fn_has_mouse_events,     has_mouse_events,           bool);
-FN0(fn_has_x10_mouse,        has_x10_mouse,              bool);
-FN0(fn_has_vt200_mouse,      has_vt200_mouse,            bool);
-FN0(fn_has_utf8_mouse,       has_utf8_mouse,             bool);
-FN0(fn_has_sgr_mouse,        has_sgr_mouse,              bool);
-FN0(fn_has_alt_scroll,       has_alt_scroll,             bool);
-FN0(fn_has_urxvt_mouse,      has_urxvt_mouse,            bool);
-FN0(fn_has_pixel_mouse,      has_pixel_mouse,            bool);
+FN0(fn_has_alt_screen,        has_alt_screen,             int);
+FN0(fn_has_colors,            has_colors_support,         int);
+FN0(fn_can_change_color,      can_change_color_support,   int);
+FN0(fn_has_mouse_support,     has_mouse_support,          int);
+FN0(fn_has_bracketed_paste,   has_bracketed_paste,        int);
+FN0(fn_has_focus_events,      has_focus_events,           int);
+FN0(fn_has_mouse_events,      has_mouse_events,           int);
+FN0(fn_has_x10_mouse,         has_x10_mouse,              int);
+FN0(fn_has_vt200_mouse,       has_vt200_mouse,            int);
+FN0(fn_has_utf8_mouse,        has_utf8_mouse,             int);
+FN0(fn_has_sgr_mouse,         has_sgr_mouse,              int);
+FN0(fn_has_alt_scroll,        has_alt_scroll,             int);
+FN0(fn_has_urxvt_mouse,       has_urxvt_mouse,            int);
+FN0(fn_has_pixel_mouse,       has_pixel_mouse,            int);
 
-FN2(fn_request_mode_status,  request_mode_status,        mode, int, 0,  dec, int, 0, int);
-FN2(fn_is_mode_supported,    is_mode_supported,          mode, int, 0,  dec, int, 0, bool);
-FN2(fn_is_mode_settable,     is_mode_settable,           mode, int, 0,  dec, int, 0, bool);
-FN2(fn_is_mode_enabled,      is_mode_enabled,            mode, int, 0,  dec, int, 0, bool);
-FN2(fn_is_mode_disabled,     is_mode_disabled,           mode, int, 0,  dec, int, 0, bool);
-FN2(fn_is_mode_permanent,    is_mode_permanent,          mode, int, 0,  dec, int, 0, bool);
+FN0(fn_get_num_pairs,         get_num_pairs,              int);
+FN0(fn_get_num_colors,        get_num_colors,             int);
+FN0(fn_get_baudrate,          get_baudrate,               int);
+FN0(fn_get_erasechar,         get_erasechar,              int);
+FN0(fn_get_killchar,          get_killchar,               int);
+FN0(fn_get_columns,           get_term_cols,              int);
+FN0(fn_get_lines,             get_term_lines,             int);
+FN0(fn_get_stdin_fd,          get_stdin_fd,               int);
+FN0(fn_get_stdout_fd,         get_stdout_fd,              int);
+FN0(fn_get_stderr_fd,         get_stderr_fd,              int);
 
-FN0(fn_is_terminal_raw,      is_terminal_raw,            bool);
-FN0(fn_enter_raw_mode,       enter_raw_mode,             bool);
-FN0(fn_exit_raw_mode,        exit_raw_mode,              bool);
+FN0(fn_is_terminal_raw,       is_terminal_raw,            bool);
+FN0(fn_enter_raw_mode,        enter_raw_mode,             int);
+FN0(fn_exit_raw_mode,         exit_raw_mode,              int);
 
-FN0(fn_is_terminal_cbreak,   is_terminal_cbreak,         bool);
-FN0(fn_enter_cbreak_mode,    enter_cbreak_mode,          bool);
-FN0(fn_exit_cbreak_mode,     exit_cbreak_mode,           bool);
+FN0(fn_is_terminal_cbreak,    is_terminal_cbreak,         bool);
+FN0(fn_enter_cbreak_mode,     enter_cbreak_mode,          int);
+FN0(fn_exit_cbreak_mode,      exit_cbreak_mode,           int);
 
-FN0(fn_is_terminal_normal,   is_terminal_normal,         bool);
-FN0(fn_restore,              restore_terminal_mode,      bool);
+FN0(fn_is_terminal_normal,    is_terminal_normal,         bool);
+FN0(fn_restore,               restore_terminal_mode,      int);
 
-FN1(fn_isatty,               is_fd_atty,  fd, int, 0,    bool);
+FN1(fn_isatty,                is_fd_atty,  fd, int, 0,    int);
 
-FN0(fn_get_key_count,        get_known_key_count,        bool);
-FS1(fn_resolve_key_code,     resolve_key_code,           name,  "", 128,  int);
-FN1(fn_get_key_modifiers,    decode_modifiers,           code, int,   0,  int);
-FZ1(fn_is_ctrl,              is_ctrl_key,                code, int,   0,  bool);
-FZ1(fn_is_alt,               is_alt_key,                 code, int,   0,  bool);
-FZ1(fn_is_shift,             is_shift_key,               code, int,   0,  bool);
+FN0(fn_get_key_count,         get_known_key_count,        int);
+FN1(fn_get_key_modifiers,     decode_modifiers,           code,  int,    0,  int);
+FZ1(fn_is_ctrl_key,           is_ctrl_key,                code,  int,    0,  bool);
+FZ1(fn_is_alt_key,            is_alt_key,                 code,  int,    0,  bool);
+FZ1(fn_is_shift_key,          is_shift_key,               code,  int,    0,  bool);
+FS1(fn_get_keycode,           resolve_key_code,           name,   "",  128,  int);
+FS1(fn_unctrl,                get_unctrl_utf8,            str,    "",  256, str);
 
-FN0(fn_disable_keyboard_action_mode,   disable_keyboard_action_mode,      str);
-FN0(fn_enable_keyboard_action_mode,    enable_keyboard_action_mode,       str);
+FN0(fn_disable_keyboard,      disable_keyboard,           str);
+FN0(fn_enable_keyboard,       enable_keyboard,            str);
 
 static napi_value fn_keys(napi_env env, napi_callback_info info) {
   (void)info;
@@ -627,23 +582,23 @@ static napi_value fn_keys(napi_env env, napi_callback_info info) {
   return arr;
 }
 
-static napi_value fn_keycode(napi_env env, napi_callback_info info) {
-  napi_value argv[1]; size_t argc = 1;
-  load_args(env, info, 1, &argc, argv);
-  if (argc < 1) return make_int(env, -1);
-  char name[128];
-  get_str(env, argv[0], name, sizeof(name));
-  return make_int(env, resolve_key_code(name));
-}
+// static napi_value fn_get_keycode(napi_env env, napi_callback_info info) {
+//   napi_value argv[1]; size_t argc = 1;
+//   load_args(env, info, 1, &argc, argv);
+//   if (argc < 1) return make_int(env, -1);
+//   char name[128];
+//   get_str(env, argv[0], name, sizeof(name));
+//   return make_int(env, resolve_key_code(name));
+// }
 
-static napi_value fn_unctrl(napi_env env, napi_callback_info info) {
-  napi_value argv[1]; size_t argc = 1;
-  load_args(env, info, 1, &argc, argv);
-  if (argc < 1) return make_str(env, "");
-  char s[8];
-  get_str(env, argv[0], s, sizeof(s));
-  return make_str(env, get_unctrl_utf8(s));
-}
+// static napi_value fn_unctrl(napi_env env, napi_callback_info info) {
+//   napi_value argv[1]; size_t argc = 1;
+//   load_args(env, info, 1, &argc, argv);
+//   if (argc < 1) return make_str(env, "");
+//   char s[8];
+//   get_str(env, argv[0], s, sizeof(s));
+//   return make_str(env, get_unctrl_utf8(s));
+// }
 
 static napi_value fn_parse_mouse(napi_env env, napi_callback_info info) {
   size_t argc = 2;
@@ -716,16 +671,37 @@ NAPI_MODULE_INIT() {
   DEFINE_FN("num_pairs",            fn_get_num_pairs);
   DEFINE_FN("can_change_color",     fn_can_change_color);
 
+
+  DEFINE_FN("is_terminal_raw",      fn_is_terminal_raw);
+  DEFINE_FN("is_terminal_cbreak",   fn_is_terminal_cbreak);
+  DEFINE_FN("is_terminal_normal",   fn_is_terminal_normal);
+  DEFINE_FN("enter_raw_mode",       fn_enter_raw_mode);
+  DEFINE_FN("enter_cbreak_mode",    fn_enter_cbreak_mode);
+  DEFINE_FN("exit_raw_mode",        fn_exit_raw_mode);
+  DEFINE_FN("exit_cbreak_mode",     fn_exit_cbreak_mode);
+  DEFINE_FN("restore",              fn_restore);
+
+  DEFINE_FN("get_baudrate",         fn_get_baudrate);
+  DEFINE_FN("get_erasechar",        fn_get_erasechar);
+  DEFINE_FN("get_killchar",         fn_get_killchar);
+  DEFINE_FN("get_columns",          fn_get_columns);
+  DEFINE_FN("get_lines",            fn_get_lines);
+  DEFINE_FN("get_stdin_fd",         fn_get_stdin_fd);
+  DEFINE_FN("get_stdout_fd",        fn_get_stdout_fd);
+  DEFINE_FN("get_stderr_fd",        fn_get_stderr_fd);
+  DEFINE_FN("isatty",               fn_isatty);
+
+  DEFINE_FN("enable_keyboard",      fn_enable_keyboard);
+  DEFINE_FN("disable_keyboard",     fn_disable_keyboard);
   DEFINE_FN("keys",                 fn_keys);
-  DEFINE_FN("keycode",              fn_keycode);
+  DEFINE_FN("keycode",              fn_get_keycode);
   DEFINE_FN("unctrl",               fn_unctrl);
-  DEFINE_FN("resolve_key_code",     fn_resolve_key_code);
+  DEFINE_FN("resolve_key_code",     fn_get_keycode);
   DEFINE_FN("get_key_count",        fn_get_key_count);
   DEFINE_FN("get_key_modifiers",    fn_get_key_modifiers);
-
-  DEFINE_FN("is_ctrl",              fn_is_ctrl);
-  DEFINE_FN("is_alt",               fn_is_alt);
-  DEFINE_FN("is_shift",             fn_is_shift);
+  DEFINE_FN("is_ctrl",              fn_is_ctrl_key);
+  DEFINE_FN("is_alt",               fn_is_alt_key);
+  DEFINE_FN("is_shift",             fn_is_shift_key);
 
   DEFINE_FN("sc",                   fn_cursor_save);
   DEFINE_FN("rc",                   fn_cursor_restore);
@@ -747,14 +723,16 @@ NAPI_MODULE_INIT() {
   DEFINE_FN("cnorm",                fn_cursor_show);
   DEFINE_FN("smcup",                fn_enter_alt_screen);
   DEFINE_FN("rmcup",                fn_exit_alt_screen);
-  DEFINE_FN("smkx",                 fn_enable_keyboard_action_mode);
-  DEFINE_FN("rmkx",                 fn_disable_keyboard_action_mode);
+  DEFINE_FN("smkx",                 fn_enable_keyboard);
+  DEFINE_FN("rmkx",                 fn_disable_keyboard);
   DEFINE_FN("kmous",                fn_enable_mouse);
   DEFINE_FN("ech",                  fn_ech);
   DEFINE_FN("dch",                  fn_dch);
   DEFINE_FN("ich",                  fn_ich);
   DEFINE_FN("ed",                   fn_ed);
   DEFINE_FN("el",                   fn_el);
+  DEFINE_FN("il",                   fn_il);
+  DEFINE_FN("dl",                   fn_dl);
 
   DEFINE_FN("cursor_move",          fn_cup);
   DEFINE_FN("cursor_home",          fn_cursor_home);
@@ -783,16 +761,6 @@ NAPI_MODULE_INIT() {
   DEFINE_FN("has_alt_screen",       fn_has_alt_screen);
   DEFINE_FN("enter_alt_screen",     fn_enter_alt_screen);
   DEFINE_FN("exit_alt_screen",      fn_exit_alt_screen);
-
-  DEFINE_FN("is_terminal_raw",      fn_is_terminal_raw);
-  DEFINE_FN("is_terminal_cbreak",   fn_is_terminal_cbreak);
-  DEFINE_FN("is_terminal_normal",   fn_is_terminal_normal);
-  DEFINE_FN("enter_raw_mode",       fn_enter_raw_mode);
-  DEFINE_FN("enter_cbreak_mode",    fn_enter_cbreak_mode);
-  DEFINE_FN("exit_raw_mode",        fn_exit_raw_mode);
-  DEFINE_FN("exit_cbreak_mode",     fn_exit_cbreak_mode);
-  DEFINE_FN("restore",              fn_restore);
-  DEFINE_FN("isatty",               fn_isatty);
 
   DEFINE_FN("enable_mouse",         fn_enable_mouse);
   DEFINE_FN("disable_mouse",        fn_disable_mouse);

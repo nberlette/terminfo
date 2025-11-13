@@ -16,13 +16,152 @@
 
 #define BUF_SIZE 256
 
+#define MOD_SHIFT  0x01
+#define MOD_ALT    0x02
+#define MOD_CTRL   0x04
+
+#define SET_X10_MOUSE             9
+#define SET_VT200_MOUSE           1000
+#define SET_VT200_HIGHLIGHT_MOUSE 1001
+#define SET_BTN_EVENT_MOUSE       1002
+#define SET_ANY_EVENT_MOUSE       1003
+#define SET_FOCUS_EVENT_MOUSE     1004
+#define SET_UTF8_EXT_MODE_MOUSE   1005
+#define SET_SGR_EXT_MODE_MOUSE    1006
+#define SET_ALT_SCROLL_MOUSE      1007
+#define SET_URXVT_EXT_MODE_MOUSE  1015
+#define SET_PIXEL_POSITION_MOUSE  1016
+#define SET_ALT_SCREEN_MODE       1049
+#define SET_BRACKETED_PASTE_MODE  2004
+
+typedef enum {
+  MOUSE_BUTTON_LEFT        = 0,
+  MOUSE_BUTTON_MIDDLE      = 1,
+  MOUSE_BUTTON_RIGHT       = 2,
+  MOUSE_BUTTON_RELEASE     = 3,
+  MOUSE_BUTTON_WHEEL_UP    = 4,
+  MOUSE_BUTTON_WHEEL_DOWN  = 5,
+  MOUSE_BUTTON_WHEEL_LEFT  = 6,
+  MOUSE_BUTTON_WHEEL_RIGHT = 7,
+} MouseButton;
+
+typedef enum {
+  MOUSE_MOD_NONE   = 0,
+  // convert keyboard mods -> mouse mods by shifting 2 bits to the left
+  MOUSE_MOD_SHIFT  = MOD_SHIFT << 2,
+  MOUSE_MOD_ALT    = MOD_ALT   << 2,
+  MOUSE_MOD_CTRL   = MOD_CTRL  << 2,
+} MouseModifier;
+
+typedef enum {
+  // emitted on button release
+  // (except when using SET_X10_MOUSE protocol)
+  MOUSE_ACTION_RELEASE     = 0,
+  // emitted on button press
+  MOUSE_ACTION_PRESS       = 1,
+  // emitted on any motion event
+  // (with SET_ANY_EVENT_MOUSE enabled)
+  MOUSE_ACTION_MOVE        = 2,
+  // emitted on motion with button held down
+  // (with SET_BTN_EVENT_MOUSE or SET_ANY_EVENT_MOUSE enabled)
+  MOUSE_ACTION_DRAG        = 3,
+  // emitted on wheel scroll up
+  MOUSE_ACTION_WHEEL_UP    = 4,
+  // emitted on wheel scroll down
+  MOUSE_ACTION_WHEEL_DOWN  = 5,
+  // emitted on wheel scroll left
+  MOUSE_ACTION_WHEEL_LEFT  = 6,
+  // emitted on wheel scroll right
+  MOUSE_ACTION_WHEEL_RIGHT = 7,
+} MouseAction;
+
+typedef enum {
+  MOUSE_PROTOCOL_UNKNOWN = 0,
+  MOUSE_PROTOCOL_X10     = 1,
+  MOUSE_PROTOCOL_VT200   = 2,
+  MOUSE_PROTOCOL_SGR     = 4,
+  MOUSE_PROTOCOL_UTF8    = 8,
+  MOUSE_PROTOCOL_URXVT   = 16,
+  MOUSE_PROTOCOL_PIXEL   = 32,
+  MOUSE_PROTOCOL_HILITE  = 64,
+} MouseProtocol;
+
+typedef enum {
+  MOUSE_NORMAL_EVENTS    = 0,
+  MOUSE_BUTTON_EVENTS    = 1,
+  MOUSE_MOTION_EVENTS    = 2,
+  MOUSE_WHEEL_EVENTS     = 4,
+  MOUSE_FOCUS_EVENTS     = 8,
+  MOUSE_ALL_EVENTS       = 15,
+} MouseEventType;
+
+typedef struct {
+  int x;
+  int y;
+  int button;
+  int action;
+  int modifiers;
+} MouseEvent;
+
+
+#define CAP_FN0(name, capname) \
+const char* name() { \
+  static char buf[BUF_SIZE]; \
+  const char* cap = tigetstr(capname); \
+  if (!cap) return ""; \
+  const char* result = tparm(cap); \
+  strncpy(buf, result, BUF_SIZE - 1); \
+  buf[BUF_SIZE - 1] = '\0'; \
+  return buf; \
+}
+
+#define CAP_FN1(name, capname, param1) \
+const char* name(int p1) { \
+  static char buf[BUF_SIZE]; \
+  const char* cap = tigetstr(capname); \
+  if (!cap) return ""; \
+  const char* result = tparm(cap, p1); \
+  strncpy(buf, result, BUF_SIZE - 1); \
+  buf[BUF_SIZE - 1] = '\0'; \
+  return buf; \
+}
+
+#define CAP_FN2(name, capname, param1, param2) \
+const char* name(int p1, int p2) { \
+  static char buf[BUF_SIZE]; \
+  const char* cap = tigetstr(capname); \
+  if (!cap) return ""; \
+  const char* result = tparm(cap, p1, p2); \
+  strncpy(buf, result, BUF_SIZE - 1); \
+  buf[BUF_SIZE - 1] = '\0'; \
+  return buf; \
+}
+
 // ---- INIT ----
 
+// cache termname after initialization
+static const char* cached_termname = NULL;
+
 int init_terminfo(const char* termname) {
-  // prevent abrupt abort on failure
+  if (cached_termname && strcmp(cached_termname, termname) == 0) {
+    // already initialized with this termname
+    return 0;
+  }
+  if (!termname) {
+    // use TERM env var if termname is NULL
+    termname = getenv("TERM");
+  }
+  if (!termname) {
+    if (cached_termname) {
+      termname = cached_termname;
+    } else {
+      return -1; // no termname available
+    }
+  }
   if (setupterm(termname, 1, NULL) != OK) {
     return -1;
   }
+  cached_termname = termname;
   return 0;
 }
 
@@ -150,31 +289,58 @@ int has_colors_support() {
 
 // ---- COMMON SEQUENCES ----
 
+CAP_FN1(hpa, "hpa", col)
+CAP_FN1(hpr, "hpr", col)
+CAP_FN1(vpa, "vpa", row)
+CAP_FN1(vpr, "vpr", row)
+CAP_FN0(home, "home")
+CAP_FN2(cup, "cup", row, col)
+CAP_FN0(cud1, "cud1")
+CAP_FN1(cud, "cud", n)
+CAP_FN0(cuu1, "cuu1")
+CAP_FN1(cuu, "cuu", n)
+CAP_FN0(cuf1, "cuf1")
+CAP_FN1(cuf, "cuf", n)
+CAP_FN0(cub1, "cub1")
+CAP_FN1(cub, "cub", n)
+
+// ------------------------------
+// Insert/Delete/Erase Characters
+// ------------------------------
+CAP_FN1(ech,  "ech", n)
+CAP_FN1(dch, "dch", n)
+CAP_FN1(ich, "ich", n)
+
+CAP_FN1(dl, "dl", n)
+CAP_FN0(dl1, "dl1")
+CAP_FN1(il, "il", n)
+CAP_FN0(il1, "il1")
+CAP_FN1(el, "el", n)
+CAP_FN0(el1, "el1")
+
+CAP_FN2(ti_csr, "csr", top, bottom)
+CAP_FN0(ti_tbc, "tbc")
+// CAP_FN1(ti_clear_margins, "clear_margins", n)
+// CAP_FN1(ti_set_left_margin, "set_left_margin", n)
+// CAP_FN1(ti_set_right_margin, "set_right_margin", n)
+// CAP_FN2(ti_set_lr_margin, "set_lr_margin", left, right)
+CAP_FN0(ti_set_tab, "ht")
+CAP_FN0(ti_flash_screen, "flash")
+
 int has_alt_screen() {
   return tigetstr("smcup") != NULL && tigetstr("rmcup") != NULL;
 }
 
-const char* enter_alt_screen() {
-  return tigetstr("smcup") ?: "";
-}
-
-const char* exit_alt_screen() {
-  return tigetstr("rmcup") ?: "";
-}
-
-const char* erase_screen() {
-  return tigetstr("clear") ?: "";
-}
-
-const char* erase_line(int mode) {
-  static char buf[BUF_SIZE];
-  const char* cap = tigetstr("el");
-  if (!cap) return "";
-  const char* result = tparm(cap, mode);
-  strncpy(buf, result, BUF_SIZE - 1);
-  buf[BUF_SIZE - 1] = '\0';
-  return buf;
-}
+CAP_FN0(enter_alt_screen, "smcup")
+CAP_FN0(exit_alt_screen, "rmcup")
+CAP_FN0(erase_screen, "clear")
+CAP_FN1(erase_line, "el", mode)
+CAP_FN0(cursor_hide, "civis")
+CAP_FN0(cursor_show, "cnorm")
+CAP_FN0(cursor_save, "sc")
+CAP_FN0(cursor_restore, "rc")
+CAP_FN0(enable_keyboard, "smkx")
+CAP_FN0(disable_keyboard, "rmkx")
 
 const char* erase_lines(int n) {
   static char buf[BUF_SIZE];
@@ -194,41 +360,6 @@ const char* erase_lines(int n) {
   return buf;
 }
 
-const char* cursor_hide() {
-  return tigetstr("civis") ?: "";
-}
-
-const char* cursor_show() {
-  return tigetstr("cnorm") ?: "";
-}
-
-const char* cursor_save() {
-  return tigetstr("sc") ?: "";
-}
-
-const char* cursor_restore() {
-  return tigetstr("rc") ?: "";
-}
-
-const char* enable_keyboard_action_mode() {
-  return tigetstr("smkx") ?: "";
-}
-
-const char* disable_keyboard_action_mode() {
-  return tigetstr("rmkx") ?: "";
-}
-
-const char* enable_mouse() {
-  const char* smkx = tigetstr("smkx");
-  const char* kmous = tigetstr("kmous");
-  return smkx ? smkx : (kmous ? kmous : "");
-}
-
-const char* disable_mouse() {
-  const char* rmkx = tigetstr("rmkx");
-  return rmkx ?: "";
-}
-
 // ---- CURSOR MOVE (alias of cup) ----
 
 const char* cursor_move(int row, int col) {
@@ -241,74 +372,396 @@ const char* cursor_move(int row, int col) {
   return buf;
 }
 
-#define CAP_FN0(name, capname) \
-const char* name() { \
-  static char buf[BUF_SIZE]; \
-  const char* cap = tigetstr(capname); \
-  if (!cap) return ""; \
-  const char* result = tparm(cap); \
-  strncpy(buf, result, BUF_SIZE - 1); \
-  buf[BUF_SIZE - 1] = '\0'; \
-  return buf; \
+// cache table of previously queried modes and their status
+// (eviction policy: LRU with fixed size of 64 entries)
+typedef struct {
+  int param;
+  int status;
+  int dec; // 1 for DECSET, 0 for SM
+} ModeEntry;
+
+#define MODE_STATUS_CACHE_SIZE 64
+
+static ModeEntry mode_cache[MODE_STATUS_CACHE_SIZE] = {0};
+
+// check if terminal supports a given mode (for SM/DECSET)
+// this requires a two-way communication with the terminal,
+// writing a request sequence to stdout/stderr, and reading
+// a response sequence from stdin, then parsing the response.
+//
+// the request sequence is usually of the form "ESC [ ? Ps $p" for
+// DECSET parameters, where Ps is the parameter number. for SM
+// parameters, it is usually "ESC [ Ps $p".
+//
+// the response sequence is usually of the form "ESC [ ? Ps ; Rn $y",
+// or "ESC [ Ps ; Rn $y" for DECSET and SM parameters respectively,
+// where Ps is the parameter number, and Rn is one of the following:
+//   - 0 : feature is unsupported / unrecognized
+//   - 1 : feature is supported and enabled
+//   - 2 : feature is supported but disabled
+//   - 3 : feature is supported and permanently enabled
+//   - 4 : feature is supported but permanently disabled
+int request_mode_status(int param, int dec) {
+  // check cache first
+  for (int i = 0; i < MODE_STATUS_CACHE_SIZE; i++) {
+    if (mode_cache[i].param == param && mode_cache[i].dec == dec) {
+      return mode_cache[i].status;
+    }
+  }
+
+  // ------------- request writing ------------- //
+
+  // send request sequence
+  char request[32];
+  snprintf(request, sizeof(request), dec ? "\x1B[?%d$p" : "\x1B[%d$p", param);
+
+  // flush stdout before writing
+  tcflush(STDOUT_FILENO, TCOFLUSH);
+  // flush stdin as well to clear any residual input
+  tcflush(STDIN_FILENO, TCIFLUSH);
+
+  // write to stdout
+  write(STDOUT_FILENO, request, strlen(request));
+
+  // flush stdout once more to ensure delivery
+  tcflush(STDOUT_FILENO, TCOFLUSH);
+
+  // ------------- response reading ------------- //
+
+  // temporarily enable raw mode + cbreak on stdin
+  struct termios oldt;
+  tcgetattr(STDIN_FILENO, &oldt);
+
+  struct termios newt = oldt;
+  // disable canonical mode, echo, and signals
+  newt.c_lflag &= ~(ICANON | ECHO | ISIG);
+  // set minimum number of bytes to read (non-canonical mode)
+  newt.c_cc[VMIN] = 0;
+  // set timeout in deciseconds (100 ms)
+  newt.c_cc[VTIME] = 3;
+  // apply new termios settings immediately
+  tcsetattr(STDIN_FILENO, TCSANOW, &newt);
+
+  // read response sequence
+  char response[32];
+  memset(response, 0, sizeof(response)); // clear buffer
+
+  // should we use select() here to wait for input?
+
+  // read response sequence
+  ssize_t n = read(STDIN_FILENO, response, sizeof(response) - 1);
+
+  int resp_param = -1, resp_value = -1;
+
+  // flush stdin to clear any residual input
+  tcflush(STDIN_FILENO, TCIFLUSH);
+
+  // restore the original terminal settings
+  tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+
+  // parse response (but only if we read something)
+  if (n > 0) {
+    // null-terminate the response string
+    int resp_len = (n < (ssize_t)(sizeof(response) - 1)) ? (int)n : (int)(sizeof(response) - 1);
+    response[resp_len] = '\0';
+
+    // parse response sequence
+    sscanf(response, "%d;%d$y", &resp_param, &resp_value);
+
+    // cache the result, evicting the oldest entry if needed
+    int evict_index = 0;
+    for (int i = 1; i < MODE_STATUS_CACHE_SIZE; i++) {
+      if (mode_cache[i].param <= 0) {
+        evict_index = i;
+        break;
+      }
+      if (mode_cache[i].param < mode_cache[evict_index].param) {
+        evict_index = i;
+      }
+    }
+
+    // cache the result (if valid)
+    if (resp_param > 0 && resp_value >= 0 && resp_value < 5) {
+      // only cache non-temporary modes, to avoid stale data
+      if (resp_value != 1 && resp_value != 2) {
+        mode_cache[evict_index].param = resp_param;
+        mode_cache[evict_index].status = resp_value;
+        mode_cache[evict_index].dec = dec;
+      }
+    }
+  }
+
+  // then return the response value (-1 on failure)
+  return resp_value;
 }
 
-#define CAP_FN1(name, capname, param1) \
-const char* name(int p1) { \
-  static char buf[BUF_SIZE]; \
-  const char* cap = tigetstr(capname); \
-  if (!cap) return ""; \
-  const char* result = tparm(cap, p1); \
-  strncpy(buf, result, BUF_SIZE - 1); \
-  buf[BUF_SIZE - 1] = '\0'; \
-  return buf; \
+int is_mode_supported(int param, int dec) {
+  int status = request_mode_status(param, dec);
+  return (status > 0 && status < 5);
 }
 
-#define CAP_FN2(name, capname, param1, param2) \
-const char* name(int p1, int p2) { \
-  static char buf[BUF_SIZE]; \
-  const char* cap = tigetstr(capname); \
-  if (!cap) return ""; \
-  const char* result = tparm(cap, p1, p2); \
-  strncpy(buf, result, BUF_SIZE - 1); \
-  buf[BUF_SIZE - 1] = '\0'; \
-  return buf; \
+int is_mode_settable(int param, int dec) {
+  int status = request_mode_status(param, dec);
+  return (status == 1 || status == 2);
 }
 
-CAP_FN1(hpa, "hpa", col)
-CAP_FN1(hpr, "hpr", col)
+int is_mode_permanent(int param, int dec) {
+  int status = request_mode_status(param, dec);
+  return (status == 3 || status == 4);
+}
 
-CAP_FN1(vpa, "vpa", row)
-CAP_FN1(vpr, "vpr", row)
+int is_mode_enabled(int param, int dec) {
+  int status = request_mode_status(param, dec);
+  return (status == 1 || status == 3);
+}
 
-CAP_FN0(home, "home")
-CAP_FN2(cup, "cup", row, col)
+int is_mode_disabled(int param, int dec) {
+  int status = request_mode_status(param, dec);
+  return (status == 2 || status == 4);
+}
 
-/** Cursor Down (n=1) */
-CAP_FN0(cud1, "cud1")
-/** Cursor Down */
-CAP_FN1(cud, "cud", n)
+// feature-specific support checks
+int has_bracketed_paste() {
+  return is_mode_supported(SET_BRACKETED_PASTE_MODE, 1);
+}
 
-/** Cursor Up (n=1) */
-CAP_FN0(cuu1, "cuu1")
-/** Cursor Up */
-CAP_FN1(cuu, "cuu", n)
 
-/** Cursor Forward (n=1) */
-CAP_FN0(cuf1, "cuf1")
-/** Cursor Forward */
-CAP_FN1(cuf, "cuf", n)
+int has_normal_mouse_kmous() {
+  const char* kmous = tigetstr("kmous");
+  if (kmous && strstr(kmous, "\x1B[M")) {
+    return 1;
+  }
+  return 0;
+}
 
-/** Cursor Backward (n=1) */
-CAP_FN0(cub1, "cub1")
-/** Cursor Backward */
-CAP_FN1(cub, "cub", n)
+int has_sgr_mouse_kmous() {
+  const char* kmous = tigetstr("kmous");
+  if (kmous && strstr(kmous, "\x1B[<")) {
+    return 1;
+  }
+  return 0;
+}
+
+int has_x10_mouse() {
+  return is_mode_supported(SET_X10_MOUSE, 1) || has_normal_mouse_kmous();
+}
+
+int has_vt200_mouse() {
+  return is_mode_supported(SET_VT200_MOUSE, 1) || has_normal_mouse_kmous();
+}
+
+int has_vt200_highlight_mouse() {
+  return has_vt200_mouse() && is_mode_supported(SET_VT200_HIGHLIGHT_MOUSE, 1);
+}
+
+int has_btn_event_mouse() {
+  return (has_normal_mouse_kmous() || has_sgr_mouse_kmous()) &&
+    is_mode_supported(SET_BTN_EVENT_MOUSE, 1);
+}
+
+int has_any_event_mouse() {
+  return (has_normal_mouse_kmous() || has_sgr_mouse_kmous()) &&
+    is_mode_supported(SET_ANY_EVENT_MOUSE, 1);
+}
+
+int has_focus_events() {
+  return is_mode_supported(SET_FOCUS_EVENT_MOUSE, 1);
+}
+
+int has_utf8_mouse() {
+  return has_normal_mouse_kmous() && is_mode_supported(SET_UTF8_EXT_MODE_MOUSE, 1);
+}
+
+int has_sgr_mouse() {
+  return has_sgr_mouse_kmous() || is_mode_supported(SET_SGR_EXT_MODE_MOUSE, 1);
+}
+
+int has_alt_scroll() {
+  return is_mode_supported(SET_ALT_SCROLL_MOUSE, 1);
+}
+
+int has_urxvt_mouse() {
+  return is_mode_supported(SET_URXVT_EXT_MODE_MOUSE, 1);
+}
+
+int has_pixel_mouse() {
+  return has_sgr_mouse_kmous() && is_mode_supported(SET_PIXEL_POSITION_MOUSE, 1);
+}
+
+int has_alt_screen_mode() {
+  return is_mode_supported(SET_ALT_SCREEN_MODE, 1);
+}
+
+const char* build_mouse_sequence(int enable) {
+  int mode = 0, events = 0;
+  if (tigetstr("kmous") != NULL) {
+    // check for SGR mouse support
+    if (has_sgr_mouse()) {
+      mode |= MOUSE_PROTOCOL_SGR;
+    } else if (has_utf8_mouse()) {
+      mode |= MOUSE_PROTOCOL_UTF8;
+    } else if (has_urxvt_mouse()) {
+      mode |= MOUSE_PROTOCOL_URXVT;
+    }
+
+    if (has_vt200_mouse()) {
+      mode |= MOUSE_PROTOCOL_VT200;
+    } else {
+      mode |= MOUSE_PROTOCOL_X10;
+    }
+    // check/apply different modes and event types if supported
+    // if (has_alt_scroll()) {
+    //   events |= MOUSE_WHEEL_EVENTS;
+    // }
+    if (has_focus_events()) {
+      events |= MOUSE_FOCUS_EVENTS;
+    }
+    if (has_btn_event_mouse()) {
+      events |= MOUSE_BUTTON_EVENTS;
+    }
+    // if (has_any_event_mouse()) {
+    //   events |= MOUSE_MOTION_EVENTS;
+    // }
+    // if (has_pixel_mouse()) {
+    //   mode |= MOUSE_PROTOCOL_PIXEL;
+    // }
+  }
+  // construct the enable mouse sequence
+  static char buf[BUF_SIZE] = "\x1B[?";
+
+  if (mode) {
+    // append mode numbers
+    if (mode & MOUSE_PROTOCOL_X10) {
+      strcat(buf, "9;");
+    } else if (mode & MOUSE_PROTOCOL_VT200) {
+      strcat(buf, "1000;");
+    }
+    if (mode & MOUSE_PROTOCOL_HILITE) {
+      strcat(buf, "1001;");
+    }
+    if (mode & MOUSE_PROTOCOL_SGR) {
+      strcat(buf, "1006;");
+    } else if (mode & MOUSE_PROTOCOL_UTF8) {
+      strcat(buf, "1005;");
+    } else if (mode & MOUSE_PROTOCOL_URXVT) {
+      strcat(buf, "1015;");
+    } else if (mode & MOUSE_PROTOCOL_PIXEL) {
+      strcat(buf, "1016;");
+    }
+  }
+  if (events) {
+    // append event type numbers
+    if (events & MOUSE_BUTTON_EVENTS) {
+      strcat(buf, "1002;");
+    }
+    if (events & MOUSE_MOTION_EVENTS) {
+      strcat(buf, "1003;");
+    }
+    if (events & MOUSE_FOCUS_EVENTS) {
+      strcat(buf, "1004;");
+    }
+    if (events & MOUSE_WHEEL_EVENTS) {
+      strcat(buf, "1007;");
+    }
+  }
+
+  // remove trailing semicolon if present
+  size_t len = strlen(buf);
+  if (len > 0 && buf[len - 1] == ';') {
+    buf[len - 1] = (enable ? 'h' : 'l');
+    buf[len] = '\0';
+  } else {
+    // if no modes/events were added, return empty string
+    buf[0] = '\0';
+  }
+  return buf;
+}
+
+const char* enable_mouse() {
+  return build_mouse_sequence(1);
+}
+
+const char* disable_mouse() {
+  return build_mouse_sequence(0);
+}
 
 // ------------------------------
-// Insert/Delete/Erase Characters
+// Section: Termios Raw/CBreak
 // ------------------------------
-CAP_FN1(ech,  "ech", n)
-CAP_FN1(dch, "dch", n)
-CAP_FN1(ich, "ich", n)
+
+static struct termios original_termios;
+
+int enter_raw_mode() {
+  struct termios raw;
+  if (tcgetattr(STDIN_FILENO, &original_termios) == -1) return -1;
+  raw = original_termios;
+  raw.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG);
+  raw.c_iflag &= ~(IXON | BRKINT | INPCK | ISTRIP);
+  raw.c_cflag |= (CS8);
+  return tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
+}
+
+int exit_raw_mode() {
+  struct termios current;
+  if (tcgetattr(STDIN_FILENO, &current) == -1) return -1;
+  // enable local echo, canonical mode, extended input processing, and signals
+  current.c_lflag |= (ECHO | ICANON | IEXTEN | ISIG);
+  // enable input processing flags
+  // (IXON: start/stop output control, ICRNL: map CR to NL, BRKINT: signal interrupt on break, INPCK: enable input parity checking, ISTRIP: strip 8th bit)
+  current.c_iflag |= (IXON | ICRNL | BRKINT | INPCK | ISTRIP);
+  // set character size to 8 bits per byte
+  current.c_cflag &= ~(CS8);
+  return tcsetattr(STDIN_FILENO, TCSAFLUSH, &current);
+}
+
+int enter_cbreak_mode() {
+  struct termios cb;
+  if (tcgetattr(STDIN_FILENO, &original_termios) == -1) return -1;
+  cb = original_termios;
+  // disable local echo and canonical mode (cbreak mode)
+  cb.c_lflag &= ~(ICANON | ECHO);
+  // enable signal generation (like Ctrl+C)
+  cb.c_lflag |= ISIG;
+  // minimum number of bytes for non-canonical read
+  cb.c_cc[VMIN] = 1;
+  // timeout (in deciseconds) for non-canonical read
+  cb.c_cc[VTIME] = 0;
+
+  return tcsetattr(STDIN_FILENO, TCSAFLUSH, &cb);
+}
+
+int exit_cbreak_mode() {
+  struct termios current;
+  if (tcgetattr(STDIN_FILENO, &current) == -1) return -1;
+  // enable local echo, canonical mode, and signal generation
+  current.c_lflag |= (ECHO | ICANON | ISIG);
+  // enable software flow control
+  current.c_iflag |= IXON;
+
+  return tcsetattr(STDIN_FILENO, TCSAFLUSH, &current);
+}
+
+int restore_terminal_mode() {
+  return tcsetattr(STDIN_FILENO, TCSAFLUSH, &original_termios);
+}
+
+int is_terminal_raw() {
+  struct termios current;
+  if (tcgetattr(STDIN_FILENO, &current) == -1) return -1;
+  return (current.c_lflag & (ECHO | ICANON | IEXTEN | ISIG)) == 0;
+}
+
+int is_terminal_cbreak() {
+  struct termios current;
+  if (tcgetattr(STDIN_FILENO, &current) == -1) return -1;
+  return (current.c_lflag & ICANON) == 0;// && (current.c_lflag & ISIG);
+}
+
+int is_terminal_normal() {
+  struct termios current;
+  if (tcgetattr(STDIN_FILENO, &current) == -1) return -1;
+  return (current.c_lflag & (ECHO | ICANON | IEXTEN | ISIG)) == (ECHO | ICANON | IEXTEN | ISIG);
+}
 
 // ------------------------------
 // Stdin/Stdout/Stderr
@@ -549,10 +1002,6 @@ const char* get_unctrl_utf8(const char* str) {
 // Section: Modifier Decoding
 // ------------------------------
 
-#define MOD_SHIFT  0x01
-#define MOD_ALT    0x02
-#define MOD_CTRL   0x04
-
 int decode_modifiers(int code) {
   int mods = 0;
   if (code >= 1 && code <= 26) mods |= MOD_CTRL;
@@ -576,79 +1025,6 @@ int is_shift_key(int code) {
 // ------------------------------
 // Section: Mouse Parser (SGR)
 // ------------------------------
-
-
-#define SET_X10_MOUSE             9
-#define SET_VT200_MOUSE           1000
-#define SET_VT200_HIGHLIGHT_MOUSE 1001
-#define SET_BTN_EVENT_MOUSE       1002
-#define SET_ANY_EVENT_MOUSE       1003
-#define SET_FOCUS_EVENT_MOUSE     1004
-#define SET_UTF8_EXT_MODE_MOUSE   1005
-#define SET_SGR_EXT_MODE_MOUSE    1006
-#define SET_ALT_SCROLL_MOUSE      1007
-#define SET_URXVT_EXT_MODE_MOUSE  1015
-#define SET_PIXEL_POSITION_MOUSE  1016
-#define SET_ALT_SCREEN_MODE       1049
-#define SET_BRACKETED_PASTE_MODE  2004
-
-typedef enum {
-  MOUSE_BUTTON_LEFT        = 0,
-  MOUSE_BUTTON_MIDDLE      = 1,
-  MOUSE_BUTTON_RIGHT       = 2,
-  MOUSE_BUTTON_RELEASE     = 3,
-  MOUSE_BUTTON_WHEEL_UP    = 4,
-  MOUSE_BUTTON_WHEEL_DOWN  = 5,
-  MOUSE_BUTTON_WHEEL_LEFT  = 6,
-  MOUSE_BUTTON_WHEEL_RIGHT = 7,
-} MouseButton;
-
-typedef enum {
-  MOUSE_MOD_NONE   = 0,
-  // convert keyboard mods -> mouse mods by shifting 2 bits to the left
-  MOUSE_MOD_SHIFT  = MOD_SHIFT << 2,
-  MOUSE_MOD_ALT    = MOD_ALT   << 2,
-  MOUSE_MOD_CTRL   = MOD_CTRL  << 2,
-} MouseModifier;
-
-typedef enum {
-  // emitted on button release
-  // (except when using SET_X10_MOUSE protocol)
-  MOUSE_ACTION_RELEASE     = 0,
-  // emitted on button press
-  MOUSE_ACTION_PRESS       = 1,
-  // emitted on any motion event
-  // (with SET_ANY_EVENT_MOUSE enabled)
-  MOUSE_ACTION_MOVE        = 2,
-  // emitted on motion with button held down
-  // (with SET_BTN_EVENT_MOUSE or SET_ANY_EVENT_MOUSE enabled)
-  MOUSE_ACTION_DRAG        = 3,
-  // emitted on wheel scroll up
-  MOUSE_ACTION_WHEEL_UP    = 4,
-  // emitted on wheel scroll down
-  MOUSE_ACTION_WHEEL_DOWN  = 5,
-  // emitted on wheel scroll left
-  MOUSE_ACTION_WHEEL_LEFT  = 6,
-  // emitted on wheel scroll right
-  MOUSE_ACTION_WHEEL_RIGHT = 7,
-} MouseAction;
-
-typedef enum {
-  MOUSE_PROTOCOL_UNKNOWN = 0,
-  MOUSE_PROTOCOL_X10     = 9,
-  MOUSE_PROTOCOL_VT200   = 1000,
-  MOUSE_PROTOCOL_URXVT   = 1015,
-  MOUSE_PROTOCOL_SGR     = 1006,
-  MOUSE_PROTOCOL_UTF8    = 1005,
-} MouseProtocol;
-
-typedef struct {
-  int x;
-  int y;
-  int button;
-  int action;
-  int modifiers;
-} MouseEvent;
 
 static MouseEvent mouse_result;
 
@@ -802,256 +1178,4 @@ int has_mouse_support() {
 
 int has_mouse_events() {
   return has_mouse_support();
-}
-
-// check if terminal supports a given mode (for SM/DECSET)
-// this requires a two-way communication with the terminal,
-// writing a request sequence to stdout/stderr, and reading
-// a response sequence from stdin, then parsing the response.
-//
-// the request sequence is usually of the form "ESC [ ? Ps $p" for
-// DECSET parameters, where Ps is the parameter number. for SM
-// parameters, it is usually "ESC [ Ps $p".
-//
-// the response sequence is usually of the form "ESC [ ? Ps ; Rn $y",
-// or "ESC [ Ps ; Rn $y" for DECSET and SM parameters respectively,
-// where Ps is the parameter number, and Rn is one of the following:
-//   - 0 : feature is unsupported / unrecognized
-//   - 1 : feature is supported and enabled
-//   - 2 : feature is supported but disabled
-//   - 3 : feature is supported and permanently enabled
-//   - 4 : feature is supported but permanently disabled
-#ifndef O_NONBLOCK
-  #define O_NONBLOCK 2048
-#endif
-#ifndef F_GETFL
-  #define F_GETFL 3
-#endif
-#ifndef F_SETFL
-  #define F_SETFL 4
-#endif
-
-int request_mode_status(int param, int dec) {
-  // read current terminal settings
-  struct termios oldt;
-  tcgetattr(STDIN_FILENO, &oldt);
-
-  // enable non-blocking read on stdin
-  int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
-  fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
-
-  // Flush input/output buffers
-  tcflush(STDIN_FILENO, TCIFLUSH);
-  tcflush(STDOUT_FILENO, TCOFLUSH);
-
-  // enable raw mode
-  enter_raw_mode();
-
-  // set a timeout for reading response
-  struct timeval timeout;
-  timeout.tv_sec = 0;
-  timeout.tv_usec = 200000; // 200 ms
-
-  // set up file descriptor set for select
-  fd_set readfds;
-  FD_ZERO(&readfds);
-  FD_SET(STDIN_FILENO, &readfds);
-  select(STDIN_FILENO + 1, &readfds, NULL, NULL, &timeout);
-
-  // input is available
-  if (FD_ISSET(STDIN_FILENO, &readfds)) {
-    // send request sequence
-    char request[32], response[64];
-    snprintf(request, sizeof(request), dec ? "\x1B[?%d$p" : "\x1B[%d$p", param);
-    write(STDOUT_FILENO, request, strlen(request));
-
-    // read response sequence
-    ssize_t n = read(STDIN_FILENO, response, sizeof(response) - 1);
-
-    tcsetattr(STDIN_FILENO, TCSANOW,  &oldt); // restore termios
-
-    if (n > 0) {
-      // null-terminate the response string
-      response[n] = '\0';
-
-      // parse response sequence
-      int resp_param = 0, resp_value = 0;
-      if (dec) {
-        sscanf(response, "\x1B[?%d;%d$y", &resp_param, &resp_value);
-      } else {
-        sscanf(response, "\x1B[%d;%d$y", &resp_param, &resp_value);
-      }
-
-      if (resp_param == param) {
-        return resp_value;
-      }
-    }
-  }
-  // restore terminal settings
-  tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
-  // timeout or no input available
-  return -1;
-}
-
-int is_mode_supported(int param, int dec) {
-  int status = request_mode_status(param, dec);
-  return (status > 0 && status < 5);
-}
-
-int is_mode_settable(int param, int dec) {
-  int status = request_mode_status(param, dec);
-  return (status == 1 || status == 2);
-}
-
-int is_mode_permanent(int param, int dec) {
-  int status = request_mode_status(param, dec);
-  return (status == 3 || status == 4);
-}
-
-int is_mode_enabled(int param, int dec) {
-  int status = request_mode_status(param, dec);
-  return (status == 1 || status == 3);
-}
-
-int is_mode_disabled(int param, int dec) {
-  int status = request_mode_status(param, dec);
-  return (status == 2 || status == 4);
-}
-
-// feature-specific support checks
-int has_bracketed_paste() {
-  return is_mode_supported(SET_BRACKETED_PASTE_MODE, 1);
-}
-
-int has_x10_mouse() {
-  return is_mode_supported(SET_X10_MOUSE, 1);
-}
-
-int has_vt200_mouse() {
-  return is_mode_supported(SET_VT200_MOUSE, 1);
-}
-
-int has_vt200_highlight_mouse() {
-  return is_mode_supported(SET_VT200_HIGHLIGHT_MOUSE, 1);
-}
-
-int has_btn_event_mouse() {
-  return is_mode_supported(SET_BTN_EVENT_MOUSE, 1);
-}
-
-int has_any_event_mouse() {
-  return is_mode_supported(SET_ANY_EVENT_MOUSE, 1);
-}
-
-int has_focus_events() {
-  return is_mode_supported(SET_FOCUS_EVENT_MOUSE, 1);
-}
-
-int has_utf8_mouse() {
-  return is_mode_supported(SET_UTF8_EXT_MODE_MOUSE, 1);
-}
-
-int has_sgr_mouse() {
-  return is_mode_supported(SET_SGR_EXT_MODE_MOUSE, 1);
-}
-
-int has_alt_scroll() {
-  return is_mode_supported(SET_ALT_SCROLL_MOUSE, 1);
-}
-
-int has_urxvt_mouse() {
-  return is_mode_supported(SET_URXVT_EXT_MODE_MOUSE, 1);
-}
-
-int has_pixel_mouse() {
-  return is_mode_supported(SET_PIXEL_POSITION_MOUSE, 1);
-}
-
-int has_alt_screen_mode() {
-  return is_mode_supported(SET_ALT_SCREEN_MODE, 1);
-}
-
-// ------------------------------
-// Section: Termios Raw/CBreak
-// ------------------------------
-
-static struct termios original_termios;
-
-int enter_raw_mode() {
-  struct termios raw;
-  if (tcgetattr(STDIN_FILENO, &original_termios) == -1) return -1;
-  raw = original_termios;
-  raw.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG);
-  raw.c_iflag &= ~(IXON | ICRNL | BRKINT | INPCK | ISTRIP);
-  raw.c_oflag &= ~(OPOST);
-  raw.c_cflag |= (CS8);
-  return tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
-}
-
-int exit_raw_mode() {
-  struct termios current;
-  if (tcgetattr(STDIN_FILENO, &current) == -1) return -1;
-  // enable local echo, canonical mode, extended input processing, and signals
-  current.c_lflag |= (ECHO | ICANON | IEXTEN | ISIG);
-  // enable input processing flags
-  // (IXON: start/stop output control, ICRNL: map CR to NL, BRKINT: signal interrupt on break, INPCK: enable input parity checking, ISTRIP: strip 8th bit)
-  current.c_iflag |= (IXON | ICRNL | BRKINT | INPCK | ISTRIP);
-  // enable output processing (post-processing of output)
-  current.c_oflag |= (OPOST);
-  // set character size to 8 bits per byte
-  current.c_cflag &= ~(CS8);
-  return tcsetattr(STDIN_FILENO, TCSAFLUSH, &current);
-}
-
-int enter_cbreak_mode() {
-  struct termios cb;
-  if (tcgetattr(STDIN_FILENO, &original_termios) == -1) return -1;
-  cb = original_termios;
-  // disable local echo and canonical mode (cbreak mode)
-  cb.c_lflag &= ~(ICANON | ECHO);
-  // enable signal generation (like Ctrl+C)
-  cb.c_lflag |= ISIG;
-  // disable software flow control
-  cb.c_iflag &= ~(IXON);
-  // set character size to 8 bits per byte
-  cb.c_cflag |= (CS8);
-  // minimum number of bytes for non-canonical read
-  cb.c_cc[VMIN] = 1;
-  // timeout (in deciseconds) for non-canonical read
-  cb.c_cc[VTIME] = 0;
-
-  return tcsetattr(STDIN_FILENO, TCSAFLUSH, &cb);
-}
-
-int exit_cbreak_mode() {
-  struct termios current;
-  if (tcgetattr(STDIN_FILENO, &current) == -1) return -1;
-  // enable local echo, canonical mode, and signal generation
-  current.c_lflag |= (ECHO | ICANON | ISIG);
-  // enable software flow control
-  current.c_iflag |= IXON;
-
-  return tcsetattr(STDIN_FILENO, TCSAFLUSH, &current);
-}
-
-int restore_terminal_mode() {
-  return tcsetattr(STDIN_FILENO, TCSAFLUSH, &original_termios);
-}
-
-int is_terminal_raw() {
-  struct termios current;
-  if (tcgetattr(STDIN_FILENO, &current) == -1) return -1;
-  return (current.c_lflag & (ECHO | ICANON | IEXTEN | ISIG)) == 0;
-}
-
-int is_terminal_cbreak() {
-  struct termios current;
-  if (tcgetattr(STDIN_FILENO, &current) == -1) return -1;
-  return (current.c_lflag & ICANON) == 0;// && (current.c_lflag & ISIG);
-}
-
-int is_terminal_normal() {
-  struct termios current;
-  if (tcgetattr(STDIN_FILENO, &current) == -1) return -1;
-  return (current.c_lflag & (ECHO | ICANON | IEXTEN | ISIG)) == (ECHO | ICANON | IEXTEN | ISIG);
 }
