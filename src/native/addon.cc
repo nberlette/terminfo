@@ -98,6 +98,7 @@ extern "C" {
   const char* cud1();
   const char* cuf1();
   const char* cub1();
+  const char* kmous();
 
   int get_known_key_count();
   int get_key_code_by_index(int index);
@@ -186,7 +187,7 @@ extern "C" {
   int has_colors_support();
   int has_mouse_support();
   int has_mouse_events();
-  int has_any_event_mouse();
+  int has_btn_event_mouse();
   int has_any_event_mouse();
   int has_focus_events();
   int has_x10_mouse();
@@ -419,10 +420,6 @@ static napi_value fn_info(napi_env env, napi_callback_info info) {
   return o;
 }
 
-FS1(fn_tigetstr, get_tigetstr, cap, "", 128, str);
-FS1(fn_tigetnum, get_tigetnum, cap, "", 128, int);
-FS1(fn_tigetflag, get_tigetflag, cap, "", 128, int);
-
 static napi_value fn_tparm(napi_env env, napi_callback_info info) {
   napi_value argv[10]; size_t argc = 10;
   load_args(env, info, 10, &argc, argv);
@@ -467,47 +464,55 @@ static napi_value fn_color_rgb(napi_env env, napi_callback_info info) {
   return o;
 }
 
-FS1(fn_cap, get_tigetstr, cap, "", 128,                   str);
-FN0(fn_ed,  erase_screen,                                 str);
-FN1(fn_el,            el,    n,  int, 1,                  str);
-FN1(fn_dl,            dl,    n,  int, 1,                  str);
-FN1(fn_il,            il,    n,  int, 1,                  str);
-FN1(fn_ech,          ech,    n,  int, 1,                  str);
-FN1(fn_dch,          dch,    n,  int, 1,                  str);
-FN1(fn_ich,          ich,    n,  int, 1,                  str);
-FN2(fn_cup,          cup,    r,  int, 0,    c, int, 0,    str);
-FN1(fn_cuu,          cuu,    n,  int, 1,                  str);
-FN1(fn_cud,          cud,    n,  int, 1,                  str);
-FN1(fn_cuf,          cuf,    n,  int, 1,                  str);
-FN1(fn_cub,          cub,    n,  int, 1,                  str);
-FN1(fn_hpa,          hpa,  col,  int, 1,                  str);
-FN1(fn_hpr,          hpr,  col,  int, 1,                  str);
-FN1(fn_vpa,          vpa,  row,  int, 1,                  str);
-FN1(fn_vpr,          vpr,  row,  int, 1,                  str);
-FN0(fn_cuu1,        cuu1,                                 str);
-FN0(fn_cud1,        cud1,                                 str);
-FN0(fn_cuf1,        cuf1,                                 str);
-FN0(fn_cub1,        cub1,                                 str);
-FN0(fn_home,        home,                                 str);
+FN0(fn_get_longname,  get_longname,                       str);
+FN0(fn_get_termname,  get_termname,                       str);
 
-FN0(fn_cursor_home,           home,                       str);
-FN0(fn_cursor_hide,           cursor_hide,                str);
-FN0(fn_cursor_show,           cursor_show,                str);
-FN0(fn_cursor_save,           cursor_save,                str);
-FN0(fn_cursor_restore,        cursor_restore,             str);
+FS1(fn_tigetstr,      get_tigetstr,  cap, "", 128,        str);
+FS1(fn_tigetnum,      get_tigetnum,  cap, "", 128,        int);
+FS1(fn_tigetflag,    get_tigetflag,  cap, "", 128,        int);
+FS1(fn_cap,           get_tigetstr,  cap, "", 128,        str);
+FN0(fn_ed,            erase_screen,                       str);
+
+FN1(fn_el,                      el,   n, int,   1,        str);
+FN1(fn_dl,                      dl,   n, int,   1,        str);
+FN1(fn_il,                      il,   n, int,   1,        str);
+FN1(fn_ech,                    ech,   n, int,   1,        str);
+FN1(fn_dch,                    dch,   n, int,   1,        str);
+FN1(fn_ich,                    ich,   n, int,   1,        str);
+FN1(fn_cuu,                    cuu,   n, int,   1,        str);
+FN1(fn_cud,                    cud,   n, int,   1,        str);
+FN1(fn_cuf,                    cuf,   n, int,   1,        str);
+FN1(fn_cub,                    cub,   n, int,   1,        str);
+FN1(fn_hpa,                    hpa, col, int,   1,        str);
+FN1(fn_hpr,                    hpr, col, int,   1,        str);
+FN1(fn_vpa,                    vpa, row, int,   1,        str);
+FN1(fn_vpr,                    vpr, row, int,   1,        str);
+FN0(fn_cuu1,                  cuu1,                       str);
+FN0(fn_cud1,                  cud1,                       str);
+FN0(fn_cuf1,                  cuf1,                       str);
+FN0(fn_cub1,                  cub1,                       str);
+FN0(fn_home,                  home,                       str);
+FN2(fn_cup,          cup,    r,  int, 0,    c, int, 0,    str);
+FN0(fn_cursor_home,                      home,            str);
+FN0(fn_cursor_hide,               cursor_hide,            str);
+FN0(fn_cursor_show,               cursor_show,            str);
+FN0(fn_cursor_save,               cursor_save,            str);
+FN0(fn_cursor_restore,         cursor_restore,            str);
 
 FN0(fn_exit_alt_screen,       exit_alt_screen,            str);
-FN0(fn_enter_alt_screen,      enter_alt_screen,           str);
-FN0(fn_enable_mouse,          enable_mouse,               str);
-FN0(fn_disable_mouse,         disable_mouse,              str);
-FN0(fn_erase_screen,          erase_screen,               str);
-FN0(fn_erase_line,            erase_line,                 str);
-FN1(fn_erase_lines,           erase_lines, n, int, 1,     str);
-FN0(fn_get_mouse_x,           get_mouse_x,                int);
-FN0(fn_get_mouse_y,           get_mouse_y,                int);
-FN0(fn_get_mouse_button,      get_mouse_button,           int);
-FN0(fn_get_mouse_action,      get_mouse_action,           int);
-FN0(fn_get_mouse_modifiers,   get_mouse_modifiers,        int);
+FN0(fn_enter_alt_screen,     enter_alt_screen,            str);
+FN0(fn_enable_mouse,             enable_mouse,            str);
+FN0(fn_disable_mouse,           disable_mouse,            str);
+FN0(fn_erase_screen,             erase_screen,            str);
+FN0(fn_erase_line,                 erase_line,            str);
+FN1(fn_erase_lines,               erase_lines, n, int, 1, str);
+FN0(fn_get_mouse_x,               get_mouse_x,            int);
+FN0(fn_get_mouse_y,               get_mouse_y,            int);
+FN0(fn_get_mouse_button,     get_mouse_button,            int);
+FN0(fn_get_mouse_action,     get_mouse_action,            int);
+FN0(fn_get_mouse_mods,    get_mouse_modifiers,            int);
+
+FN0(fn_kmous,                kmous,                       str);
 
 FN2(fn_request_mode_status,   request_mode_status,        mode, int, 0,  dec, int, 0, int);
 FN2(fn_is_mode_supported,     is_mode_supported,          mode, int, 0,  dec, int, 0, int);
@@ -523,8 +528,11 @@ FN0(fn_has_mouse_support,     has_mouse_support,          int);
 FN0(fn_has_bracketed_paste,   has_bracketed_paste,        int);
 FN0(fn_has_focus_events,      has_focus_events,           int);
 FN0(fn_has_mouse_events,      has_mouse_events,           int);
+FN0(fn_has_btn_event_mouse,   has_btn_event_mouse,        int);
+FN0(fn_has_any_event_mouse,   has_any_event_mouse,        int);
 FN0(fn_has_x10_mouse,         has_x10_mouse,              int);
 FN0(fn_has_vt200_mouse,       has_vt200_mouse,            int);
+FN0(fn_has_highlight_mouse,   has_vt200_highlight_mouse,  int);
 FN0(fn_has_utf8_mouse,        has_utf8_mouse,             int);
 FN0(fn_has_sgr_mouse,         has_sgr_mouse,              int);
 FN0(fn_has_alt_scroll,        has_alt_scroll,             int);
@@ -581,24 +589,6 @@ static napi_value fn_keys(napi_env env, napi_callback_info info) {
   }
   return arr;
 }
-
-// static napi_value fn_get_keycode(napi_env env, napi_callback_info info) {
-//   napi_value argv[1]; size_t argc = 1;
-//   load_args(env, info, 1, &argc, argv);
-//   if (argc < 1) return make_int(env, -1);
-//   char name[128];
-//   get_str(env, argv[0], name, sizeof(name));
-//   return make_int(env, resolve_key_code(name));
-// }
-
-// static napi_value fn_unctrl(napi_env env, napi_callback_info info) {
-//   napi_value argv[1]; size_t argc = 1;
-//   load_args(env, info, 1, &argc, argv);
-//   if (argc < 1) return make_str(env, "");
-//   char s[8];
-//   get_str(env, argv[0], s, sizeof(s));
-//   return make_str(env, get_unctrl_utf8(s));
-// }
 
 static napi_value fn_parse_mouse(napi_env env, napi_callback_info info) {
   size_t argc = 2;
@@ -671,25 +661,26 @@ NAPI_MODULE_INIT() {
   DEFINE_FN("num_pairs",            fn_get_num_pairs);
   DEFINE_FN("can_change_color",     fn_can_change_color);
 
+  DEFINE_FN("termname",             fn_get_termname);
+  DEFINE_FN("longname",             fn_get_longname);
+  DEFINE_FN("columns",              fn_get_columns);
+  DEFINE_FN("lines",                fn_get_lines);
+  DEFINE_FN("baudrate",             fn_get_baudrate);
+  DEFINE_FN("erasechar",            fn_get_erasechar);
+  DEFINE_FN("killchar",             fn_get_killchar);
+  DEFINE_FN("stdin_fd",             fn_get_stdin_fd);
+  DEFINE_FN("stdout_fd",            fn_get_stdout_fd);
+  DEFINE_FN("stderr_fd",            fn_get_stderr_fd);
+  DEFINE_FN("isatty",               fn_isatty);
 
   DEFINE_FN("is_terminal_raw",      fn_is_terminal_raw);
   DEFINE_FN("is_terminal_cbreak",   fn_is_terminal_cbreak);
   DEFINE_FN("is_terminal_normal",   fn_is_terminal_normal);
   DEFINE_FN("enter_raw_mode",       fn_enter_raw_mode);
-  DEFINE_FN("enter_cbreak_mode",    fn_enter_cbreak_mode);
   DEFINE_FN("exit_raw_mode",        fn_exit_raw_mode);
+  DEFINE_FN("enter_cbreak_mode",    fn_enter_cbreak_mode);
   DEFINE_FN("exit_cbreak_mode",     fn_exit_cbreak_mode);
   DEFINE_FN("restore",              fn_restore);
-
-  DEFINE_FN("get_baudrate",         fn_get_baudrate);
-  DEFINE_FN("get_erasechar",        fn_get_erasechar);
-  DEFINE_FN("get_killchar",         fn_get_killchar);
-  DEFINE_FN("get_columns",          fn_get_columns);
-  DEFINE_FN("get_lines",            fn_get_lines);
-  DEFINE_FN("get_stdin_fd",         fn_get_stdin_fd);
-  DEFINE_FN("get_stdout_fd",        fn_get_stdout_fd);
-  DEFINE_FN("get_stderr_fd",        fn_get_stderr_fd);
-  DEFINE_FN("isatty",               fn_isatty);
 
   DEFINE_FN("enable_keyboard",      fn_enable_keyboard);
   DEFINE_FN("disable_keyboard",     fn_disable_keyboard);
@@ -725,7 +716,7 @@ NAPI_MODULE_INIT() {
   DEFINE_FN("rmcup",                fn_exit_alt_screen);
   DEFINE_FN("smkx",                 fn_enable_keyboard);
   DEFINE_FN("rmkx",                 fn_disable_keyboard);
-  DEFINE_FN("kmous",                fn_enable_mouse);
+  DEFINE_FN("kmous",                fn_kmous);
   DEFINE_FN("ech",                  fn_ech);
   DEFINE_FN("dch",                  fn_dch);
   DEFINE_FN("ich",                  fn_ich);
@@ -762,33 +753,37 @@ NAPI_MODULE_INIT() {
   DEFINE_FN("enter_alt_screen",     fn_enter_alt_screen);
   DEFINE_FN("exit_alt_screen",      fn_exit_alt_screen);
 
-  DEFINE_FN("enable_mouse",         fn_enable_mouse);
-  DEFINE_FN("disable_mouse",        fn_disable_mouse);
-  DEFINE_FN("parse_mouse",          fn_parse_mouse);
-  DEFINE_FN("get_mouse_x",          fn_get_mouse_x);
-  DEFINE_FN("get_mouse_y",          fn_get_mouse_y);
-  DEFINE_FN("get_mouse_button",     fn_get_mouse_button);
-  DEFINE_FN("get_mouse_action",     fn_get_mouse_action);
-  DEFINE_FN("get_mouse_modifiers",  fn_get_mouse_modifiers);
+  DEFINE_FN("request_mode_status",       fn_request_mode_status);
+  DEFINE_FN("is_mode_permanent",         fn_is_mode_permanent);
+  DEFINE_FN("is_mode_supported",         fn_is_mode_supported);
+  DEFINE_FN("is_mode_disabled",          fn_is_mode_disabled);
+  DEFINE_FN("is_mode_settable",          fn_is_mode_settable);
+  DEFINE_FN("is_mode_enabled",           fn_is_mode_enabled);
 
-  DEFINE_FN("has_mouse_support",    fn_has_mouse_support);
-  DEFINE_FN("has_bracketed_paste",  fn_has_bracketed_paste);
-  DEFINE_FN("has_focus_events",     fn_has_focus_events);
-  DEFINE_FN("has_mouse_events",     fn_has_mouse_events);
-  DEFINE_FN("has_x10_mouse",        fn_has_x10_mouse);
-  DEFINE_FN("has_vt200_mouse",      fn_has_vt200_mouse);
-  DEFINE_FN("has_utf8_mouse",       fn_has_utf8_mouse);
-  DEFINE_FN("has_sgr_mouse",        fn_has_sgr_mouse);
-  DEFINE_FN("has_alt_scroll",       fn_has_alt_scroll);
-  DEFINE_FN("has_urxvt_mouse",      fn_has_urxvt_mouse);
-  DEFINE_FN("has_pixel_mouse",      fn_has_pixel_mouse);
+  DEFINE_FN("has_mouse_support",         fn_has_mouse_support);
+  DEFINE_FN("has_bracketed_paste",       fn_has_bracketed_paste);
+  DEFINE_FN("has_focus_events",          fn_has_focus_events);
+  DEFINE_FN("has_mouse_events",          fn_has_mouse_events);
+  DEFINE_FN("has_button_events",         fn_has_btn_event_mouse);
+  DEFINE_FN("has_motion_events",         fn_has_any_event_mouse);
+  DEFINE_FN("has_x10_mouse",             fn_has_x10_mouse);
+  DEFINE_FN("has_vt200_mouse",           fn_has_vt200_mouse);
+  DEFINE_FN("has_vt200_highlight_mouse", fn_has_highlight_mouse);
+  DEFINE_FN("has_utf8_mouse",            fn_has_utf8_mouse);
+  DEFINE_FN("has_sgr_mouse",             fn_has_sgr_mouse);
+  DEFINE_FN("has_alt_scroll",            fn_has_alt_scroll);
+  DEFINE_FN("has_urxvt_mouse",           fn_has_urxvt_mouse);
+  DEFINE_FN("has_pixel_mouse",           fn_has_pixel_mouse);
 
-  DEFINE_FN("request_mode_status",  fn_request_mode_status);
-  DEFINE_FN("is_mode_supported",    fn_is_mode_supported);
-  DEFINE_FN("is_mode_settable",     fn_is_mode_settable);
-  DEFINE_FN("is_mode_enabled",      fn_is_mode_enabled);
-  DEFINE_FN("is_mode_disabled",     fn_is_mode_disabled);
-  DEFINE_FN("is_mode_permanent",    fn_is_mode_permanent);
+  DEFINE_FN("enable_mouse",              fn_enable_mouse);
+  DEFINE_FN("disable_mouse",             fn_disable_mouse);
+  DEFINE_FN("parse_mouse",               fn_parse_mouse);
+  DEFINE_FN("get_mouse_x",               fn_get_mouse_x);
+  DEFINE_FN("get_mouse_y",               fn_get_mouse_y);
+  DEFINE_FN("get_mouse_button",          fn_get_mouse_button);
+  DEFINE_FN("get_mouse_action",          fn_get_mouse_action);
+  DEFINE_FN("get_mouse_modifiers",       fn_get_mouse_mods);
+
 
   return exports;
 }

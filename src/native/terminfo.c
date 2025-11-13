@@ -805,6 +805,8 @@ const char* disable_mouse() {
   return build_mouse_sequence(0);
 }
 
+CAP_FN0(kmous, "kmous")
+
 // ------------------------------
 // Section: Termios Raw/CBreak
 // ------------------------------
