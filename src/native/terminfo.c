@@ -13,6 +13,8 @@
 #include <stdint.h>
 #include <termios.h>
 #include <unistd.h>
+#include <sys/select.h>
+#include <errno.h>
 
 #define BUF_SIZE 256
 
@@ -381,9 +383,98 @@ typedef struct {
   int dec; // 1 for DECSET, 0 for SM
 } ModeEntry;
 
-#define MODE_STATUS_CACHE_SIZE 64
+static ModeEntry mode_cache[BUF_SIZE] = {0};
 
-static ModeEntry mode_cache[MODE_STATUS_CACHE_SIZE] = {0};
+// Existing global cache (optional, if you still want a default cache)
+static ModeEntry mode_support_cache[BUF_SIZE] = {0};
+
+static int find_free_cache_index(ModeEntry *cache, int size) {
+  for (int i = 0; i < size; i++) {
+    if (cache[i].param == 0) {
+      return i;
+    }
+  }
+  // if cache is full, evict the first entry (simple FIFO)
+  return 0;
+}
+
+static int find_cache_entry_index(
+  ModeEntry *cache, int size, int param, int dec
+) {
+  for (int i = 0; i < size; i++) {
+    if (cache[i].param == param && cache[i].dec == dec) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+static ModeEntry *get_cache_entry(
+  ModeEntry *cache, int size, int param, int dec
+) {
+  int index = find_cache_entry_index(cache, size, param, dec);
+  if (index >= 0) {
+    return &cache[index];
+  }
+  return NULL;
+}
+
+static ModeEntry *add_cache_entry(
+  ModeEntry *cache, int size, int param, int dec, int status
+) {
+  int index = find_free_cache_index(cache, size);
+  cache[index].param = param;
+  cache[index].dec = dec;
+  cache[index].status = status;
+  return &cache[index];
+}
+
+static ModeEntry *get_mode_support_entry(int param, int dec) {
+  return get_cache_entry(mode_support_cache, BUF_SIZE, param, dec);
+}
+
+static ModeEntry *add_mode_support_entry(int param, int dec, int status) {
+  return add_cache_entry(mode_support_cache, BUF_SIZE, param, dec, status);
+}
+
+static int parse_mode_status_response(const char* response, int* param, int* value) {
+  if (!response) return 0;
+  const char* esc = strchr(response, '\x1B');
+  while (esc) {
+    if (esc[1] != '[') {
+      esc = strchr(esc + 1, '\x1B');
+      continue;
+    }
+    const char* p = esc + 2;
+    if (*p == '?') {
+      p++;
+    }
+    if (!isdigit((unsigned char)*p)) {
+      esc = strchr(esc + 1, '\x1B');
+      continue;
+    }
+    char* end = NULL;
+    long param_long = strtol(p, &end, 10);
+    if (end == p || *end != ';') {
+      esc = strchr(esc + 1, '\x1B');
+      continue;
+    }
+    p = end + 1;
+    long value_long = strtol(p, &end, 10);
+    if (end == p || *end != '$') {
+      esc = strchr(esc + 1, '\x1B');
+      continue;
+    }
+    if (end[1] != 'y' && end[1] != 'Y') {
+      esc = strchr(esc + 1, '\x1B');
+      continue;
+    }
+    *param = (int)param_long;
+    *value = (int)value_long;
+    return 1;
+  }
+  return 0;
+}
 
 // check if terminal supports a given mode (for SM/DECSET)
 // this requires a two-way communication with the terminal,
@@ -404,10 +495,9 @@ static ModeEntry mode_cache[MODE_STATUS_CACHE_SIZE] = {0};
 //   - 4 : feature is supported but permanently disabled
 int request_mode_status(int param, int dec) {
   // check cache first
-  for (int i = 0; i < MODE_STATUS_CACHE_SIZE; i++) {
-    if (mode_cache[i].param == param && mode_cache[i].dec == dec) {
-      return mode_cache[i].status;
-    }
+  ModeEntry* cached = get_cache_entry(mode_cache, BUF_SIZE, param, dec);
+  if (cached != NULL && cached->status >= 0) {
+    return cached->status;
   }
 
   // ------------- request writing ------------- //
@@ -424,8 +514,8 @@ int request_mode_status(int param, int dec) {
   // write to stdout
   write(STDOUT_FILENO, request, strlen(request));
 
-  // flush stdout once more to ensure delivery
-  tcflush(STDOUT_FILENO, TCOFLUSH);
+  // ensure the request is transmitted
+  tcdrain(STDOUT_FILENO);
 
   // ------------- response reading ------------- //
 
@@ -444,15 +534,44 @@ int request_mode_status(int param, int dec) {
   tcsetattr(STDIN_FILENO, TCSANOW, &newt);
 
   // read response sequence
-  char response[32];
-  memset(response, 0, sizeof(response)); // clear buffer
+  char response[64];
+  memset(response, 0, sizeof(response));
 
-  // should we use select() here to wait for input?
+  size_t total = 0;
+  int attempts = 0;
+  const int max_attempts = 5;
 
-  // read response sequence
-  ssize_t n = read(STDIN_FILENO, response, sizeof(response) - 1);
+  while (total < sizeof(response) - 1 && attempts < max_attempts) {
+    fd_set readfds;
+    FD_ZERO(&readfds);
+    FD_SET(STDIN_FILENO, &readfds);
 
-  int resp_param = -1, resp_value = -1;
+    struct timeval tv = { .tv_sec = 0, .tv_usec = 100000 };
+    int ready = select(STDIN_FILENO + 1, &readfds, NULL, NULL, &tv);
+    if (ready == -1) {
+      if (errno == EINTR) continue;
+      break;
+    }
+    if (ready == 0) {
+      attempts++;
+      continue;
+    }
+
+    ssize_t chunk = read(STDIN_FILENO, response + total, (sizeof(response) - 1) - total);
+    if (chunk > 0) {
+      total += (size_t)chunk;
+      response[total] = '\0';
+      if (strstr(response, "$y") || strstr(response, "$Y")) {
+        break;
+      }
+    } else if (chunk == 0) {
+      attempts++;
+    } else {
+      if (errno == EINTR) continue;
+      break;
+    }
+  }
+  ssize_t n = (ssize_t)total;
 
   // flush stdin to clear any residual input
   tcflush(STDIN_FILENO, TCIFLUSH);
@@ -460,35 +579,27 @@ int request_mode_status(int param, int dec) {
   // restore the original terminal settings
   tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
 
+  // ------------- response parsing ------------- //
+  int resp_param = -1, resp_value = -1;
+
   // parse response (but only if we read something)
   if (n > 0) {
-    // null-terminate the response string
     int resp_len = (n < (ssize_t)(sizeof(response) - 1)) ? (int)n : (int)(sizeof(response) - 1);
     response[resp_len] = '\0';
 
-    // parse response sequence
-    sscanf(response, "%d;%d$y", &resp_param, &resp_value);
-
-    // cache the result, evicting the oldest entry if needed
-    int evict_index = 0;
-    for (int i = 1; i < MODE_STATUS_CACHE_SIZE; i++) {
-      if (mode_cache[i].param <= 0) {
-        evict_index = i;
-        break;
-      }
-      if (mode_cache[i].param < mode_cache[evict_index].param) {
-        evict_index = i;
-      }
+    if (!parse_mode_status_response(response, &resp_param, &resp_value)) {
+      resp_param = -1;
+      resp_value = -1;
     }
 
-    // cache the result (if valid)
-    if (resp_param > 0 && resp_value >= 0 && resp_value < 5) {
-      // only cache non-temporary modes, to avoid stale data
-      if (resp_value != 1 && resp_value != 2) {
-        mode_cache[evict_index].param = resp_param;
-        mode_cache[evict_index].status = resp_value;
-        mode_cache[evict_index].dec = dec;
+    // only cache non-temporary modes, to avoid stale data
+    if (resp_param == param && resp_value >= 0 && resp_value <= 4) {
+      if (resp_value == 0 || resp_value == 3 || resp_value == 4) {
+        add_cache_entry(mode_cache, BUF_SIZE, param, dec, resp_value);
       }
+      // also cache in the global support cache, speeding up future
+      // queries to is_mode_supported() etc.
+      add_mode_support_entry(param, dec, (resp_value == 0) ? 0 : 1);
     }
   }
 
@@ -497,18 +608,26 @@ int request_mode_status(int param, int dec) {
 }
 
 int is_mode_supported(int param, int dec) {
-  int status = request_mode_status(param, dec);
-  return (status > 0 && status < 5);
-}
+  ModeEntry* cached = get_mode_support_entry(param, dec);
 
-int is_mode_settable(int param, int dec) {
+  if (cached != NULL) return cached->status;
+
   int status = request_mode_status(param, dec);
-  return (status == 1 || status == 2);
+  if (status > 0 && status < 5) {
+    add_mode_support_entry(param, dec, 1);
+    return 1;
+  }
+
+  return 0;
 }
 
 int is_mode_permanent(int param, int dec) {
   int status = request_mode_status(param, dec);
   return (status == 3 || status == 4);
+}
+
+int is_mode_settable(int param, int dec) {
+  return is_mode_supported(param, dec) && !is_mode_permanent(param, dec);
 }
 
 int is_mode_enabled(int param, int dec) {
