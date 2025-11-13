@@ -260,7 +260,7 @@ const char* get_boxchar(int style, int part) {
     case 6: tbl = slimdubs; break;
     case 7: tbl = dubsslim; break;
   }
-  return (part >= 0 && part < 11) ? tbl[part] : "?";
+  return (part >= 0 && part < 11) ? tbl[part] : "";
 }
 
 // ---- COLOR ----
