@@ -8,7 +8,7 @@ import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Optional, Set, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 __version__ = "1.1.0"
 
@@ -100,9 +100,14 @@ def clone_value(value: Dict[str, object]) -> Dict[str, object]:
     "derived": bool(value.get("derived")),
   }
 
-def pop_value(stack: List[Dict[str, object]]) -> Dict[str, object]:
+def pop_value(
+  stack: List[Dict[str, object]],
+  default_factory: Optional[Callable[[], Dict[str, object]]] = None,
+) -> Dict[str, object]:
   if stack:
     return stack.pop()
+  if default_factory:
+    return default_factory()
   return {"params": set(), "derived": False}
 
 def push_const(stack: List[Dict[str, object]]) -> None:
@@ -140,7 +145,7 @@ def read_format_command(value: str, start: int) -> Tuple[Optional[str], int]:
   return None, start
 
 def analyze_string_parameters(value: str) -> List[Dict[str, object]]:
-  if not value or "%p" not in value:
+  if not value or "%" not in value:
     return []
   stack: List[Dict[str, object]] = []
   variables: Dict[str, Dict[str, object]] = {}
@@ -150,6 +155,14 @@ def analyze_string_parameters(value: str) -> List[Dict[str, object]]:
   unary_ops = set("!~")
   i = 0
   length = len(value)
+  implicit_index = 1
+
+  def implicit_operand() -> Dict[str, object]:
+    nonlocal implicit_index
+    entry = {"params": {implicit_index}, "derived": False}
+    implicit_index += 1
+    return entry
+
   while i < length:
     ch = value[i]
     if ch != "%":
@@ -167,6 +180,7 @@ def analyze_string_parameters(value: str) -> List[Dict[str, object]]:
         idx = int(value[i])
         i += 1
         stack.append({"params": {idx}, "derived": False})
+        implicit_index = max(implicit_index, idx + 1)
       continue
     if cmd == "P":
       if i < length:
@@ -208,15 +222,15 @@ def analyze_string_parameters(value: str) -> List[Dict[str, object]]:
       stack.append({"params": set(val.get("params", set())), "derived": True})
       continue
     if cmd in binary_ops:
-      right = pop_value(stack)
-      left = pop_value(stack)
+      right = pop_value(stack, implicit_operand)
+      left = pop_value(stack, implicit_operand)
       stack.append({
         "params": set(left.get("params", set())) | set(right.get("params", set())),
         "derived": True,
       })
       continue
     if cmd in unary_ops:
-      operand = pop_value(stack)
+      operand = pop_value(stack, implicit_operand)
       stack.append({"params": set(operand.get("params", set())), "derived": True})
       continue
     if cmd in ("?", "t", "e", ";"):
@@ -226,12 +240,12 @@ def analyze_string_parameters(value: str) -> List[Dict[str, object]]:
         stack[-1], stack[-2] = stack[-2], stack[-1]
       continue
     if cmd in FORMAT_COMMANDS:
-      note_parameter_usage(usage, pop_value(stack), cmd)
+      note_parameter_usage(usage, pop_value(stack, implicit_operand), cmd)
       continue
     if cmd in FORMAT_FLAG_CHARS:
       fmt_cmd, i = read_format_command(value, i)
       if fmt_cmd:
-        note_parameter_usage(usage, pop_value(stack), fmt_cmd)
+        note_parameter_usage(usage, pop_value(stack, implicit_operand), fmt_cmd)
       continue
   result: List[Dict[str, object]] = []
   for idx in sorted(usage):
@@ -579,9 +593,8 @@ def main() -> None:
   if args.format == "json" and args.comments:
     renderer = render_jsonc
   data = renderer(payload)
-  output = args.output
-  output.write(data)
-  output.write("\n")
+  args.output.write(data)
+  args.output.write("\n")
 
 if __name__ == "__main__":
   main()
