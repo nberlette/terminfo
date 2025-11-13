@@ -451,7 +451,38 @@ def build_mapping(term: str) -> Dict[str, Dict[str, object]]:
   hydrate("boolean")
   hydrate("number")
   hydrate("string")
+  annotate_key_relationships(mapping)
   return mapping
+
+def annotate_key_relationships(mapping: Dict[str, Dict[str, object]]) -> None:
+  human_to_code: Dict[str, str] = {}
+  for code, payload in mapping.items():
+    human = payload.get("human")
+    if human and human not in human_to_code:
+      human_to_code[human] = code
+  for code, payload in mapping.items():
+    human = payload.get("human")
+    key_info = payload.get("key")
+    if not key_info and isinstance(human, str):
+      key_info = describe_key_binding(code, human)
+      if key_info:
+        payload["key"] = key_info
+    if not key_info:
+      continue
+    modifiers = key_info.get("modifiers") or []
+    base_name = key_info.get("base")
+    if not modifiers or not base_name:
+      continue
+    base_human = f"key_{base_name}"
+    base_code = human_to_code.get(base_human)
+    if base_code and base_code != code:
+      base_payload = mapping.get(base_code)
+      key_info["base_cap"] = base_code
+      if base_payload:
+        if base_payload.get("terminfo"):
+          key_info["base_terminfo"] = base_payload["terminfo"]
+        if base_payload.get("value"):
+          key_info["base_value"] = base_payload["value"]
 
 TYPE_ORDER = {"boolean": 0, "number": 1, "string": 2}
 
