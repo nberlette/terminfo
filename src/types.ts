@@ -19,6 +19,8 @@ export interface Info {
   has_alt_screen: boolean;
   has_focus_events: boolean;
   has_mouse_events: boolean;
+  has_button_events: boolean;
+  has_motion_events: boolean;
   has_x10_mouse: boolean;
   has_vt200_mouse: boolean;
   has_utf8_mouse: boolean;
@@ -40,9 +42,9 @@ export type BoxCharStyle = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7; // 0=light, 1=heavy
 
 export const enum ModeStatus {
   Unrecognized = 0,
-  Enabled      = 1,
-  Disabled     = 2,
-  PermEnabled  = 3,
+  Enabled = 1,
+  Disabled = 2,
+  PermEnabled = 3,
   PermDisabled = 4,
 }
 export type CapName =
