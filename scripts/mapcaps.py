@@ -412,7 +412,7 @@ def resolve_termcap_code(
       return matches[0]
   return name
 
-def build_mapping(term: str) -> Dict[str, Dict[str, object]]:
+def build_mapping(term: str, include_control: bool, include_keys: bool) -> Dict[str, Dict[str, object]]:
   short_names = parse_capability_listing(term, "-I")
   human_names = parse_capability_listing(term, "-L")
   values = parse_capability_values(term)
@@ -440,18 +440,21 @@ def build_mapping(term: str) -> Dict[str, Dict[str, object]]:
         params = describe_string_parameters(entry.value)
         if params:
           payload["parameters"] = params
-        control = describe_control_character(value if isinstance(value, str) else None)
-        if control:
-          payload["control"] = control
-      key_info = describe_key_binding(code, human or None)
-      if key_info:
-        payload["key"] = key_info
-      mapping[code] = payload
+        if include_control:
+          control = describe_control_character(value if isinstance(value, str) else None)
+          if control:
+            payload["control"] = control
+      if include_keys:
+        key_info = describe_key_binding(code, human or None)
+        if key_info:
+          payload["key"] = key_info
+        mapping[code] = payload
 
   hydrate("boolean")
   hydrate("number")
   hydrate("string")
-  annotate_key_relationships(mapping)
+  if include_keys:
+    annotate_key_relationships(mapping)
   return mapping
 
 def annotate_key_relationships(mapping: Dict[str, Dict[str, object]]) -> None:
@@ -654,6 +657,20 @@ def parse_args() -> argparse.Namespace:
     action="version",
     version=f"terminfo_capmap {__version__}"
   )
+  parser.add_argument(
+    "--no-control",
+    dest="control",
+    action="store_false",
+    default=True,
+    help="omit control-character metadata"
+  )
+  parser.add_argument(
+    "--no-keys",
+    dest="keys",
+    action="store_false",
+    default=True,
+    help="omit key relationship metadata"
+  )
   return parser.parse_args()
 
 def main() -> None:
@@ -667,7 +684,7 @@ def main() -> None:
     print("No term specified and $TERM is unset", file=sys.stderr)
     sys.exit(1)
   try:
-    capabilities = build_mapping(args.term)
+    capabilities = build_mapping(args.term, args.control, args.keys)
   except RuntimeError as err:
     print(err, file=sys.stderr)
     sys.exit(1)
