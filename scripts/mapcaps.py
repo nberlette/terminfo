@@ -552,6 +552,20 @@ def emit_yaml(obj: object, indent: int = 0) -> List[str]:
 def render_yaml(data: Dict[str, object]) -> str:
   return "\n".join(emit_yaml(data))
 
+def render_yaml_with_comments(data: Dict[str, object]) -> str:
+  lines: List[str] = [f"term: {yaml_scalar(data.get('term'))}"]
+  caps = data.get("capabilities")
+  if isinstance(caps, dict) and caps:
+    lines.append("capabilities:")
+    for code, payload in caps.items():
+      lines.append(f"  # {code}: {summarize_capability(code, payload)}")
+      key = code if re.fullmatch(r"[A-Za-z0-9_]+", code) else json.dumps(code, ensure_ascii=False)
+      lines.append(f"  {key}:")
+      lines.extend(emit_yaml(payload, indent=2))
+  else:
+    lines.append("capabilities: {}")
+  return "\n".join(lines)
+
 def toml_scalar(value: object) -> str:
   if value is None:
     return "null"
@@ -590,6 +604,29 @@ def render_toml(data: Dict[str, object]) -> str:
 def render_json(data: Dict[str, object]) -> str:
   return json.dumps(data, indent=2, ensure_ascii=False)
 
+def summarize_capability(code: str, payload: Dict[str, object]) -> str:
+  parts: List[str] = []
+  human = payload.get("human")
+  if isinstance(human, str) and human:
+    parts.append(human)
+  ti_name = payload.get("terminfo")
+  if isinstance(ti_name, str) and ti_name and ti_name != code:
+    parts.append(f"terminfo={ti_name}")
+  key_info = payload.get("key")
+  if isinstance(key_info, dict):
+    mods = key_info.get("modifiers")
+    if isinstance(mods, list) and mods:
+      parts.append(f"mods={'+'.join(mods)}")
+  control = payload.get("control")
+  if isinstance(control, dict):
+    caret = control.get("caret")
+    if isinstance(caret, str):
+      parts.append(f"control={caret}")
+  cap_type = payload.get("type")
+  if not parts and isinstance(cap_type, str):
+    parts.append(cap_type)
+  return " | ".join(parts) if parts else "capability"
+
 def render_jsonc(data: Dict[str, object]) -> str:
   header = f'// terminfo capability mapping for {data.get("term")}'
   caps = data.get("capabilities")
@@ -603,19 +640,7 @@ def render_jsonc(data: Dict[str, object]) -> str:
   ]
   items = list(caps.items())
   for idx, (code, payload) in enumerate(items):
-    human = payload.get("human")
-    ti_name = payload.get("terminfo")
-    key_info = payload.get("key")
-    info_parts: List[str] = []
-    if isinstance(human, str) and human:
-      info_parts.append(human)
-    if isinstance(ti_name, str) and ti_name and ti_name != code:
-      info_parts.append(f"terminfo={ti_name}")
-    if isinstance(key_info, dict) and key_info.get("modifiers"):
-      mods = "+".join(key_info["modifiers"])
-      info_parts.append(f"mods={mods}")
-    summary = " | ".join(info_parts) if info_parts else payload.get("type", "capability")
-    lines.append(f"    // {code}: {summary}")
+    lines.append(f"    // {code}: {summarize_capability(code, payload)}")
     payload_json = json.dumps(payload, ensure_ascii=False, indent=2)
     payload_lines = payload_json.splitlines()
     if payload_lines:
@@ -746,8 +771,11 @@ def main() -> None:
     "toml": render_toml,
   }
   renderer = renderers[args.format]
-  if args.format == "json" and args.comments:
-    renderer = render_jsonc
+  if args.comments:
+    if args.format == "json":
+      renderer = render_jsonc
+    elif args.format == "yaml":
+      renderer = render_yaml_with_comments
   data = renderer(payload)
   args.output.write(data)
   args.output.write("\n")
