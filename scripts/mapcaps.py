@@ -591,8 +591,42 @@ def render_json(data: Dict[str, object]) -> str:
   return json.dumps(data, indent=2, ensure_ascii=False)
 
 def render_jsonc(data: Dict[str, object]) -> str:
-  comment = f'// terminfo capability mapping for {data.get("term")}'
-  return f"{comment}\n{render_json(data)}"
+  header = f'// terminfo capability mapping for {data.get("term")}'
+  caps = data.get("capabilities")
+  if not isinstance(caps, dict) or not caps:
+    return f"{header}\n{render_json(data)}"
+  lines: List[str] = [
+    header,
+    "{",
+    f'  "term": {json.dumps(data.get("term"), ensure_ascii=False)},',
+    '  "capabilities": {',
+  ]
+  items = list(caps.items())
+  for idx, (code, payload) in enumerate(items):
+    human = payload.get("human")
+    ti_name = payload.get("terminfo")
+    key_info = payload.get("key")
+    info_parts: List[str] = []
+    if isinstance(human, str) and human:
+      info_parts.append(human)
+    if isinstance(ti_name, str) and ti_name and ti_name != code:
+      info_parts.append(f"terminfo={ti_name}")
+    if isinstance(key_info, dict) and key_info.get("modifiers"):
+      mods = "+".join(key_info["modifiers"])
+      info_parts.append(f"mods={mods}")
+    summary = " | ".join(info_parts) if info_parts else payload.get("type", "capability")
+    lines.append(f"    // {code}: {summary}")
+    payload_json = json.dumps(payload, ensure_ascii=False, indent=2)
+    payload_lines = payload_json.splitlines()
+    if payload_lines:
+      lines.append(f'    "{code}": {payload_lines[0]}')
+      for pline in payload_lines[1:]:
+        lines.append(f"    {pline}")
+      if idx < len(items) - 1:
+        lines[-1] = lines[-1] + ","
+  lines.append("  }")
+  lines.append("}")
+  return "\n".join(lines)
 
 def compile_patterns(patterns: Iterable[str]) -> Optional[List[re.Pattern]]:
   compiled = []
@@ -611,11 +645,6 @@ def parse_args() -> argparse.Namespace:
     "-t", "--term",
     default=os.environ.get("TERM"),
     help="terminal / terminfo entry name"
-  )
-  parser.add_argument(
-    "-C", "--caps",
-    action="store_true",
-    help="include capabilities mapping in the output"
   )
   parser.add_argument(
     "-f", "--format",
