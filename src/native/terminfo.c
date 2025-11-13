@@ -259,6 +259,7 @@ const char* get_boxchar(int style, int part) {
     case 5: tbl = thiccslim; break;
     case 6: tbl = slimdubs; break;
     case 7: tbl = dubsslim; break;
+    default: tbl = slim; break;
   }
   return (part >= 0 && part < 11) ? tbl[part] : "";
 }
