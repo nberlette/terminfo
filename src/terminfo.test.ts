@@ -1,4 +1,4 @@
-import { describe, it, beforeEach } from "node:test";
+import { beforeEach, describe, it } from "node:test";
 import process from "node:process";
 
 import ti from "./terminfo.ts";

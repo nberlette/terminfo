@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import process from "node:process";
 
-import type { MouseParsed, Info, Terminfo } from "./types.ts";
+import type { Info, MouseParsed, Terminfo } from "./types.ts";
 
 const require = createRequire(import.meta.url);
 
@@ -56,14 +56,16 @@ function attempt<T, A extends readonly any[] = any[]>(
   }
 }
 
-
 export const terminfo: Terminfo = {
   ...native,
   init(term?: string): boolean {
     try {
       return +native.init(term ??= process.env.TERM || "xterm") === 0;
     } catch (cause) {
-      throw new TypeError(`Failed to initialize terminfo for terminal "${term}"`, { cause });
+      throw new TypeError(
+        `Failed to initialize terminfo for terminal "${term}"`,
+        { cause },
+      );
     }
   },
   info(): Info {
