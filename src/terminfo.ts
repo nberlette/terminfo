@@ -4,7 +4,6 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import process from "node:process";
-import _native from "./native/terminfo.node";
 
 import type { MouseParsed, Info, Terminfo } from "./types.ts";
 
@@ -29,7 +28,7 @@ function loadNative(): Terminfo {
   throw lastError ?? new Error("Failed to load terminfo addon");
 }
 
-const native: Terminfo = _native ?? loadNative();
+const native: Terminfo = loadNative();
 
 function attempt<T, A extends readonly any[] = any[]>(
   closure: (...args: A) => T,
