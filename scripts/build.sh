@@ -134,20 +134,29 @@ debug "paths collected:"$'\n'\
 "   addon path:    ${TERMINFO_ADDON_PATH}"
 
 run cd "${BASE_DIR:-.}"
-# run cp binding.gyp "${NATIVE_DIR}/binding.gyp"
-# run cd "${NATIVE_DIR}"
+
+echo $'\e[22;2m'
 
 if [[ "${VERBOSE}" == "1" ]]; then
-  run node-gyp rebuild ${BUILD_TYPE} --verbose
+  # indent output
+  run node-gyp rebuild ${BUILD_TYPE} --verbose --color=always 2>&1 \
+    | sed -E $'s/^([a-zA-Z0-9]+)/\033[94m\\1\033[39m/g' \
+    | sed -E 's/^/    /g'
 elif [[ "${SILENT}" == "1" ]]; then
   run node-gyp rebuild ${BUILD_TYPE} &>/dev/null
 else
-  run node-gyp rebuild ${BUILD_TYPE}
+  # indent output
+  run node-gyp rebuild ${BUILD_TYPE} --color=always 2>&1 \
+    | sed -E $'s/^([a-zA-Z0-9]+)/\033[94m\\1\033[39m/g' \
+    | sed -E 's/^/    /g'
 fi
 
+echo $'\e[0m'
 run mkdir -p "${OUTPUT_DIR}"
 
 run cp -r build "${OUTPUT_DIR}/"
 run cp "${TERMINFO_ADDON_PATH}" "${OUTPUT_DIR}/"
+run cd "${OUTPUT_DIR}/"
+run rm -rf build
 
 log "finished building terminfo addon!"
