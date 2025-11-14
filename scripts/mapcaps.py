@@ -1,14 +1,9 @@
 #!/usr/bin/env python3
 """Generate a mapping of termcap codes to terminfo metadata and values."""
-import argparse
-import json
-import os
-import re
-import shutil
-import subprocess
-import sys
+import json, os, re, shutil, subprocess, sys
+from argparse import ArgumentParser, FileType, Namespace, Action, ArgumentTypeError, HelpFormatter
 from dataclasses import dataclass
-from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple, Union, overload
 
 __version__ = "1.1.0"
 
@@ -32,8 +27,7 @@ FORMAT_LABELS = {
   "s": "string",
   "[": "char_set",
 }
-
-CONTROL_PATTERN = re.compile(r"^\^(.)$")
+CONTROL_PATTERN = re.compile(r"^\^([a-zA-Z<>@\[\]\?\\\_])$")
 KEY_BASES = {
   "home": "home",
   "end": "end",
@@ -55,7 +49,10 @@ KEY_BASES = {
 class CapabilityEntry:
   name: str
   type: str
-  value: Optional[object]
+  value: Optional[object] = None
+
+USE_COLOR = sys.stdout.isatty()
+
 
 def run_infocmp(term: str, extra: List[str]) -> str:
   cmd = ["infocmp"] + extra + [term]
@@ -584,6 +581,7 @@ def render_toml(data: Dict[str, object]) -> str:
     lines.append("")
     for name, payload in caps.items():
       lines.append(f"[capabilities.{name}]")
+      dict_entries: List[Tuple[str, Dict[str, object]]] = []
       for key, val in payload.items():
         if key == "parameters" and isinstance(val, list):
           if not val:
@@ -593,8 +591,15 @@ def render_toml(data: Dict[str, object]) -> str:
             if isinstance(param, dict):
               for param_key, param_val in param.items():
                 lines.append(f"{param_key} = {toml_scalar(param_val)}")
+        elif isinstance(val, dict):
+          dict_entries.append((key, val))
         else:
           lines.append(f"{key} = {toml_scalar(val)}")
+      for sub_key, sub_val in dict_entries:
+        lines.append("")
+        lines.append(f"[capabilities.{name}.{sub_key}]")
+        for leaf_key, leaf_val in sub_val.items():
+          lines.append(f"{leaf_key} = {toml_scalar(leaf_val)}")
       if lines[-1] != "":
         lines.append("")
     if lines[-1] == "":
@@ -728,20 +733,27 @@ def parse_args() -> argparse.Namespace:
   return parser.parse_args()
 
 def main() -> None:
-  args = parse_args()
-  patterns = compile_patterns(args.filter)
-  exclude_patterns = compile_patterns(args.exclude)
+  # 1. ensure infocmp is available
   if not shutil.which("infocmp"):
     print("infocmp is not available on PATH", file=sys.stderr)
     sys.exit(1)
+  # 2. parse args and verify term is specified
+  args = parse_args()
   if not args.term:
     print("No term specified and $TERM is unset", file=sys.stderr)
     sys.exit(1)
+  # 3. build capability mapping
   try:
     capabilities = build_mapping(args.term, args.control, args.keys)
   except RuntimeError as err:
     print(err, file=sys.stderr)
     sys.exit(1)
+  # 4. prepare and apply filters
+  # 4a. compile include patterns
+  patterns = compile_patterns(args.filter)
+  # 4b. compile exclude patterns
+  exclude_patterns = compile_patterns(args.exclude)
+  # 4c. filter capabilities
   if patterns or exclude_patterns:
     filtered = {}
     for code, payload in capabilities.items():
@@ -762,7 +774,9 @@ def main() -> None:
       if matches_include and not matches_exclude:
         filtered[code] = payload
     capabilities = filtered
+  # 5. sort output if --sort is specified
   capabilities = sort_capabilities(capabilities, args.sort)
+  # 6. render output payload
   payload = {"term": args.term, "capabilities": capabilities}
   renderers = {
     "json": render_json,
@@ -770,15 +784,17 @@ def main() -> None:
     "yaml": render_yaml,
     "toml": render_toml,
   }
-  renderer = renderers[args.format]
+  renderer = renderers.get(args.format, render_json)
   if args.comments:
-    if args.format == "json":
+    if args.format == "json" or renderer == render_json:
       renderer = render_jsonc
     elif args.format == "yaml":
       renderer = render_yaml_with_comments
-  data = renderer(payload)
-  args.output.write(data)
-  args.output.write("\n")
+    elif args.format == "toml":
+      renderer = render_toml_with_comments
+
+  # 7. write output to file or stdout
+  args.output.write(renderer(payload) + "\n")
 
 if __name__ == "__main__":
   main()
