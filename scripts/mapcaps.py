@@ -1,14 +1,9 @@
 #!/usr/bin/env python3
 """Generate a mapping of termcap codes to terminfo metadata and values."""
-import argparse
-import json
-import os
-import re
-import shutil
-import subprocess
-import sys
+import json, os, re, shutil, subprocess, sys
+from argparse import ArgumentParser, FileType, Namespace, Action, ArgumentTypeError, HelpFormatter
 from dataclasses import dataclass
-from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple, Union, overload
 
 __version__ = "1.1.0"
 
@@ -32,8 +27,7 @@ FORMAT_LABELS = {
   "s": "string",
   "[": "char_set",
 }
-
-CONTROL_PATTERN = re.compile(r"^\^(.)$")
+CONTROL_PATTERN = re.compile(r"^\^([a-zA-Z<>@\[\]\?\\\_])$")
 KEY_BASES = {
   "home": "home",
   "end": "end",
@@ -55,7 +49,10 @@ KEY_BASES = {
 class CapabilityEntry:
   name: str
   type: str
-  value: Optional[object]
+  value: Optional[object] = None
+
+USE_COLOR = sys.stdout.isatty()
+
 
 def run_infocmp(term: str, extra: List[str]) -> str:
   cmd = ["infocmp"] + extra + [term]
@@ -552,6 +549,20 @@ def emit_yaml(obj: object, indent: int = 0) -> List[str]:
 def render_yaml(data: Dict[str, object]) -> str:
   return "\n".join(emit_yaml(data))
 
+def render_yaml_with_comments(data: Dict[str, object]) -> str:
+  lines: List[str] = [f"term: {yaml_scalar(data.get('term'))}"]
+  caps = data.get("capabilities")
+  if isinstance(caps, dict) and caps:
+    lines.append("capabilities:")
+    for code, payload in caps.items():
+      lines.append(f"  # {code}: {summarize_capability(code, payload)}")
+      key = code if re.fullmatch(r"[A-Za-z0-9_]+", code) else json.dumps(code, ensure_ascii=False)
+      lines.append(f"  {key}:")
+      lines.extend(emit_yaml(payload, indent=2))
+  else:
+    lines.append("capabilities: {}")
+  return "\n".join(lines)
+
 def toml_scalar(value: object) -> str:
   if value is None:
     return "null"
@@ -570,6 +581,7 @@ def render_toml(data: Dict[str, object]) -> str:
     lines.append("")
     for name, payload in caps.items():
       lines.append(f"[capabilities.{name}]")
+      dict_entries: List[Tuple[str, Dict[str, object]]] = []
       for key, val in payload.items():
         if key == "parameters" and isinstance(val, list):
           if not val:
@@ -579,8 +591,15 @@ def render_toml(data: Dict[str, object]) -> str:
             if isinstance(param, dict):
               for param_key, param_val in param.items():
                 lines.append(f"{param_key} = {toml_scalar(param_val)}")
+        elif isinstance(val, dict):
+          dict_entries.append((key, val))
         else:
           lines.append(f"{key} = {toml_scalar(val)}")
+      for sub_key, sub_val in dict_entries:
+        lines.append("")
+        lines.append(f"[capabilities.{name}.{sub_key}]")
+        for leaf_key, leaf_val in sub_val.items():
+          lines.append(f"{leaf_key} = {toml_scalar(leaf_val)}")
       if lines[-1] != "":
         lines.append("")
     if lines[-1] == "":
@@ -590,9 +609,54 @@ def render_toml(data: Dict[str, object]) -> str:
 def render_json(data: Dict[str, object]) -> str:
   return json.dumps(data, indent=2, ensure_ascii=False)
 
+def summarize_capability(code: str, payload: Dict[str, object]) -> str:
+  parts: List[str] = []
+  human = payload.get("human")
+  if isinstance(human, str) and human:
+    parts.append(human)
+  ti_name = payload.get("terminfo")
+  if isinstance(ti_name, str) and ti_name and ti_name != code:
+    parts.append(f"terminfo={ti_name}")
+  key_info = payload.get("key")
+  if isinstance(key_info, dict):
+    mods = key_info.get("modifiers")
+    if isinstance(mods, list) and mods:
+      parts.append(f"mods={'+'.join(mods)}")
+  control = payload.get("control")
+  if isinstance(control, dict):
+    caret = control.get("caret")
+    if isinstance(caret, str):
+      parts.append(f"control={caret}")
+  cap_type = payload.get("type")
+  if not parts and isinstance(cap_type, str):
+    parts.append(cap_type)
+  return " | ".join(parts) if parts else "capability"
+
 def render_jsonc(data: Dict[str, object]) -> str:
-  comment = f'// terminfo capability mapping for {data.get("term")}'
-  return f"{comment}\n{render_json(data)}"
+  header = f'// terminfo capability mapping for {data.get("term")}'
+  caps = data.get("capabilities")
+  if not isinstance(caps, dict) or not caps:
+    return f"{header}\n{render_json(data)}"
+  lines: List[str] = [
+    header,
+    "{",
+    f'  "term": {json.dumps(data.get("term"), ensure_ascii=False)},',
+    '  "capabilities": {',
+  ]
+  items = list(caps.items())
+  for idx, (code, payload) in enumerate(items):
+    lines.append(f"    // {code}: {summarize_capability(code, payload)}")
+    payload_json = json.dumps(payload, ensure_ascii=False, indent=2)
+    payload_lines = payload_json.splitlines()
+    if payload_lines:
+      lines.append(f'    "{code}": {payload_lines[0]}')
+      for pline in payload_lines[1:]:
+        lines.append(f"    {pline}")
+      if idx < len(items) - 1:
+        lines[-1] = lines[-1] + ","
+  lines.append("  }")
+  lines.append("}")
+  return "\n".join(lines)
 
 def compile_patterns(patterns: Iterable[str]) -> Optional[List[re.Pattern]]:
   compiled = []
@@ -611,11 +675,6 @@ def parse_args() -> argparse.Namespace:
     "-t", "--term",
     default=os.environ.get("TERM"),
     help="terminal / terminfo entry name"
-  )
-  parser.add_argument(
-    "-C", "--caps",
-    action="store_true",
-    help="include capabilities mapping in the output"
   )
   parser.add_argument(
     "-f", "--format",
@@ -674,20 +733,27 @@ def parse_args() -> argparse.Namespace:
   return parser.parse_args()
 
 def main() -> None:
-  args = parse_args()
-  patterns = compile_patterns(args.filter)
-  exclude_patterns = compile_patterns(args.exclude)
+  # 1. ensure infocmp is available
   if not shutil.which("infocmp"):
     print("infocmp is not available on PATH", file=sys.stderr)
     sys.exit(1)
+  # 2. parse args and verify term is specified
+  args = parse_args()
   if not args.term:
     print("No term specified and $TERM is unset", file=sys.stderr)
     sys.exit(1)
+  # 3. build capability mapping
   try:
     capabilities = build_mapping(args.term, args.control, args.keys)
   except RuntimeError as err:
     print(err, file=sys.stderr)
     sys.exit(1)
+  # 4. prepare and apply filters
+  # 4a. compile include patterns
+  patterns = compile_patterns(args.filter)
+  # 4b. compile exclude patterns
+  exclude_patterns = compile_patterns(args.exclude)
+  # 4c. filter capabilities
   if patterns or exclude_patterns:
     filtered = {}
     for code, payload in capabilities.items():
@@ -708,7 +774,9 @@ def main() -> None:
       if matches_include and not matches_exclude:
         filtered[code] = payload
     capabilities = filtered
+  # 5. sort output if --sort is specified
   capabilities = sort_capabilities(capabilities, args.sort)
+  # 6. render output payload
   payload = {"term": args.term, "capabilities": capabilities}
   renderers = {
     "json": render_json,
@@ -716,12 +784,17 @@ def main() -> None:
     "yaml": render_yaml,
     "toml": render_toml,
   }
-  renderer = renderers[args.format]
-  if args.format == "json" and args.comments:
-    renderer = render_jsonc
-  data = renderer(payload)
-  args.output.write(data)
-  args.output.write("\n")
+  renderer = renderers.get(args.format, render_json)
+  if args.comments:
+    if args.format == "json" or renderer == render_json:
+      renderer = render_jsonc
+    elif args.format == "yaml":
+      renderer = render_yaml_with_comments
+    elif args.format == "toml":
+      renderer = render_toml_with_comments
+
+  # 7. write output to file or stdout
+  args.output.write(renderer(payload) + "\n")
 
 if __name__ == "__main__":
   main()
